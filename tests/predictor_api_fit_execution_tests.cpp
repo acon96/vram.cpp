@@ -89,22 +89,19 @@ void test_fit_mode_executes_in_process_with_overrides() {
 
         assert(contains(body, "\"ok\":true"));
         assert(contains(body, "\"executedInProcess\":true"));
-        assert(contains(body, "\"fitTargetMiB\":[2560]"));
-        assert(contains(body, "\"targetFreeMiB\":[2048]"));
-        assert(contains(body, "\"overrideDeviceFreeMiB\":[4096]"));
-        assert(contains(body, "\"overrideDeviceTotalMiB\":[8192]"));
-        assert(contains(body, "\"overrideHostFreeMiB\":32768"));
-        assert(contains(body, "\"recommended_n_ctx\":4096"));
-        assert(contains(body, "\"recommended_n_gpu_layers\":-1"));
-        assert(contains(body, "\"memoryBreakdown\""));
+        assert(contains(body, "\"targets\":{\"fitMiB\":[2560],\"targetFreeMiB\":[2048]}"));
+        assert(contains(body, "\"overrides\":{\"deviceFreeMiB\":[4096],\"deviceTotalMiB\":[8192],\"hostFreeMiB\":32768}"));
+        assert(contains(body, "\"recommended\":{\"n_ctx\":4096,\"n_gpu_layers\":-1}"));
+        assert(contains(body, "\"breakdown\""));
         assert(contains(body, "\"devices\":[{"));
         assert(contains(body, "\"host\":{\"name\":\"Host\""));
         assert(contains(body, "\"totals\":{\"modelMiB\":"));
         assert(contains(body, "\"modelMiB\":"));
         assert(contains(body, "\"contextMiB\":"));
         assert(contains(body, "\"computeMiB\":"));
-        assert(contains(body, "\"weights_bytes\":"));
-        assert(contains(body, "\"kv_cache_bytes\":"));
+        assert(contains(body, "\"memoryBytes\""));
+        assert(contains(body, "\"weights\":"));
+        assert(contains(body, "\"kvCache\":"));
     }
 }
 

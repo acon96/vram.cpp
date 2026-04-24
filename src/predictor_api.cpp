@@ -3,7 +3,6 @@
 #include "vram/fit_executor.h"
 #include "vram/gguf_prefix_parser.h"
 #include "vram/hf_range_fetch_helper.h"
-#include "vram/hf_range_plan.h"
 
 #include <nlohmann/json.hpp>
 
@@ -169,19 +168,6 @@ json headers_to_json(const std::vector<std::pair<std::string, std::string>> & he
     return out;
 }
 
-json parse_status_to_json(vram::gguf_prefix_parse_status status) {
-    switch (status) {
-        case vram::gguf_prefix_parse_status::complete:
-            return "complete";
-        case vram::gguf_prefix_parse_status::need_more_data:
-            return "need_more_data";
-        case vram::gguf_prefix_parse_status::invalid_format:
-            return "invalid_format";
-        default:
-            return "unknown";
-    }
-}
-
 json fit_memory_entry_to_json(const vram::fit_memory_breakdown_entry & entry) {
     return {
         {"name", entry.name},
@@ -191,6 +177,52 @@ json fit_memory_entry_to_json(const vram::fit_memory_breakdown_entry & entry) {
         {"contextMiB", entry.context_mib},
         {"computeMiB", entry.compute_mib},
         {"unaccountedMiB", entry.unaccounted_mib},
+    };
+}
+
+json fit_targets_to_json(const std::vector<uint64_t> & fit_target_mib, const std::vector<uint64_t> & target_free_mib) {
+    return {
+        {"fitMiB", fit_target_mib},
+        {"targetFreeMiB", target_free_mib},
+    };
+}
+
+json fit_overrides_to_json(
+    const std::vector<uint64_t> & device_free_mib,
+    const std::vector<uint64_t> & device_total_mib,
+    uint64_t host_free_mib) {
+    return {
+        {"deviceFreeMiB", device_free_mib},
+        {"deviceTotalMiB", device_total_mib},
+        {"hostFreeMiB", host_free_mib},
+    };
+}
+
+json fit_memory_bytes_to_json(const vram::fit_execution_result & result) {
+    return {
+        {"weights", result.totals.model_mib * 1024ULL * 1024ULL},
+        {"kvCache", result.totals.context_mib * 1024ULL * 1024ULL},
+        {"device", (result.totals.model_mib + result.totals.context_mib + result.totals.compute_mib) * 1024ULL * 1024ULL},
+        {"host", (result.host.model_mib + result.host.context_mib + result.host.compute_mib) * 1024ULL * 1024ULL},
+    };
+}
+
+json fit_memory_breakdown_to_json(const vram::fit_execution_result & result) {
+    json devices = json::array();
+    for (const auto & entry : result.devices) {
+        devices.push_back(fit_memory_entry_to_json(entry));
+    }
+
+    return {
+        {"totals",
+            {
+                {"modelMiB", result.totals.model_mib},
+                {"contextMiB", result.totals.context_mib},
+                {"computeMiB", result.totals.compute_mib}
+            }
+        },
+        {"devices", devices},
+        {"host", fit_memory_entry_to_json(result.host)}
     };
 }
 
@@ -206,8 +238,8 @@ extern "C" const char * vram_predictor_get_system_info_json(void) {
 #endif
 
     json body = {
-        {"apiVersion", "0.1.0"},
-        {"engine", "vram-cpp"},
+        {"ok", true},
+        {"version", "0.1.0"},
         {"target", target},
         {"features",
             {
@@ -224,14 +256,12 @@ extern "C" const char * vram_predictor_get_system_info_json(void) {
     } catch (const std::exception & error) {
         response = json({
             {"ok", false},
-            {"phase", "phase-0-stub"},
             {"error", "system_info_exception"},
             {"message", error.what()}
         }).dump();
     } catch (...) {
         response = json({
             {"ok", false},
-            {"phase", "phase-0-stub"},
             {"error", "system_info_exception"},
             {"message", "unknown_exception"}
         }).dump();
@@ -246,7 +276,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     if (request_json == nullptr) {
         json error = {
             {"ok", false},
-            {"phase", "phase-0-stub"},
             {"error", "null_request_json"}
         };
         response = error.dump();
@@ -257,7 +286,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     if (parsed.is_discarded()) {
         json error = {
             {"ok", false},
-            {"phase", "phase-0-stub"},
             {"error", "invalid_json"}
         };
         response = error.dump();
@@ -267,7 +295,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     if (!parsed.is_object()) {
         json error = {
             {"ok", false},
-            {"phase", "phase-2-prefix-parser"},
             {"error", "request_must_be_object"}
         };
         response = error.dump();
@@ -289,9 +316,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         if (source != "local") {
             json error = {
                 {"ok", false},
-                {"engine", "vram-cpp"},
-                {"apiVersion", "0.1.0"},
-                {"phase", "phase-4-fit-parity"},
                 {"error", "fit_mode_currently_requires_local_model_source"}
             };
             response = error.dump();
@@ -301,7 +325,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         if (!model.contains("path") || !model["path"].is_string()) {
             json error = {
                 {"ok", false},
-                {"phase", "phase-4-fit-parity"},
                 {"error", "model.path_required_for_fit_mode"}
             };
             response = error.dump();
@@ -320,7 +343,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             if (!device["gpus"].is_array()) {
                 json error = {
                     {"ok", false},
-                    {"phase", "phase-4-fit-parity"},
                     {"error", "device.gpus_must_be_array_when_present"}
                 };
                 response = error.dump();
@@ -331,7 +353,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 if (!gpu.is_object() || !gpu.contains("free_bytes") || !gpu["free_bytes"].is_number_integer()) {
                     json error = {
                         {"ok", false},
-                        {"phase", "phase-4-fit-parity"},
                         {"error", "device.gpus[].free_bytes_required_for_fit_override"}
                     };
                     response = error.dump();
@@ -351,7 +372,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         if (!override_device_total_mib.empty() && override_device_total_mib.size() != override_device_free_mib.size()) {
             json error = {
                 {"ok", false},
-                {"phase", "phase-4-fit-parity"},
                 {"error", "device.gpus[].total_bytes_must_be_present_for_all_or_none"}
             };
             response = error.dump();
@@ -435,9 +455,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             if (!vram::execute_fit_request(exec_request, exec_result, exec_error)) {
                 json error = {
                     {"ok", false},
-                    {"engine", "vram-cpp"},
-                    {"apiVersion", "0.1.0"},
-                    {"phase", "phase-4-fit-parity"},
                     {"error", exec_error.empty() ? "fit_execution_failed" : exec_error}
                 };
                 response = error.dump();
@@ -446,55 +463,21 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
             json body = {
                 {"ok", exec_result.ok},
-                {"engine", "vram-cpp"},
-                {"apiVersion", "0.1.0"},
-                {"phase", "phase-4-fit-parity"},
-                {"mode", "fit"},
-                {"memory",
-                    {
-                        {"weights_bytes", (exec_result.totals.model_mib * 1024ULL * 1024ULL)},
-                        {"kv_cache_bytes", (exec_result.totals.context_mib * 1024ULL * 1024ULL)},
-                        {"device_bytes", ((exec_result.totals.model_mib + exec_result.totals.context_mib + exec_result.totals.compute_mib) * 1024ULL * 1024ULL)},
-                        {"host_bytes", ((exec_result.host.model_mib + exec_result.host.context_mib + exec_result.host.compute_mib) * 1024ULL * 1024ULL)}
-                    }
-                },
                 {"fit",
                     {
                         {"executedInProcess", true},
-                        {"binary", "in_process"},
-                        {"fitTargetMiB", exec_result.fit_target_mib},
-                        {"targetFreeMiB", target_free_mib},
-                        {"overrideDeviceFreeMiB", exec_result.device_free_mib},
-                        {"overrideDeviceTotalMiB", exec_result.device_total_mib},
-                        {"overrideHostFreeMiB", exec_result.host_free_mib},
-                        {"executeNative", false},
-                        {"recommended_n_ctx", exec_result.n_ctx},
-                        {"recommended_n_gpu_layers", exec_result.n_gpu_layers},
-                        {"status", exec_result.status},
-                        {"warnings", exec_result.warnings},
-                        {"memoryBreakdown",
+                        {"targets", fit_targets_to_json(exec_result.fit_target_mib, target_free_mib)},
+                        {"overrides", fit_overrides_to_json(exec_result.device_free_mib, exec_result.device_total_mib, exec_result.host_free_mib)},
+                        {"recommended",
                             {
-                                {"totals",
-                                    {
-                                        {"modelMiB", exec_result.totals.model_mib},
-                                        {"contextMiB", exec_result.totals.context_mib},
-                                        {"computeMiB", exec_result.totals.compute_mib}
-                                    }
-                                },
-                                {"devices", [&]() {
-                                    json devices = json::array();
-                                    for (const auto & entry : exec_result.devices) {
-                                        devices.push_back(fit_memory_entry_to_json(entry));
-                                    }
-                                    return devices;
-                                }()},
-                                {"host", fit_memory_entry_to_json(exec_result.host)}
+                                {"n_ctx", exec_result.n_ctx},
+                                {"n_gpu_layers", exec_result.n_gpu_layers}
                             }
                         },
-                        {"limitations", {
-                            "Fit request executed in-process through the vendored llama/common patch surface.",
-                            "Reported breakdown reflects a fitted context instantiated in the current runtime after applying override-mode fit parameters."
-                        }}
+                        {"status", exec_result.status},
+                        {"warnings", exec_result.warnings},
+                        {"memoryBytes", fit_memory_bytes_to_json(exec_result)},
+                        {"breakdown", fit_memory_breakdown_to_json(exec_result)}
                     }
                 }
             };
@@ -504,28 +487,18 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
         json body = {
             {"ok", true},
-            {"engine", "vram-cpp"},
-            {"apiVersion", "0.1.0"},
-            {"phase", "phase-4-fit-parity"},
-            {"mode", "fit"},
             {"fit",
                 {
-                    {"binary", harness_bin},
-                    {"args", args},
                     {"executedInProcess", false},
-                    {"fitTargetMiB", fit_target_mib},
-                    {"targetFreeMiB", target_free_mib},
-                    {"overrideDeviceFreeMiB", override_device_free_mib},
-                    {"overrideDeviceTotalMiB", override_device_total_mib},
-                    {"overrideHostFreeMiB", override_host_free_mib},
-                    {"executeNative", false},
-                    {"limitations", {
-                        "Predictor API does not shell out to llama-fit executables.",
-                        "Set fit.execute_in_process=true in a vendor-enabled build to run the fit request through the in-process override path.",
-                        "Run in-process fit via vram_fit_harness (native) or embedded C++ fit bridge (wasm target integration step).",
-                        "fit_target_mib maps to llama-fit margin-per-device semantics.",
-                        "device.gpus[].free_bytes can override detected device memory for deterministic hardware simulation."
-                    }}
+                    {"command",
+                        {
+                            {"binary", harness_bin},
+                            {"args", args}
+                        }
+                    },
+                    {"targets", fit_targets_to_json(fit_target_mib, target_free_mib)},
+                    {"overrides", fit_overrides_to_json(override_device_free_mib, override_device_total_mib, override_host_free_mib)},
+                    {"showLogs", show_fit_logs}
                 }
             }
         };
@@ -538,7 +511,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             if (!model.contains("huggingFace") || !model["huggingFace"].is_object()) {
                 json error = {
                     {"ok", false},
-                    {"phase", "phase-2-prefix-parser"},
                     {"error", "model.huggingFace_required_for_huggingface_source"}
                 };
                 response = error.dump();
@@ -560,7 +532,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             if (url.empty()) {
                 json error = {
                     {"ok", false},
-                    {"phase", "phase-2-prefix-parser"},
                     {"error", "invalid_huggingface_model_descriptor"}
                 };
                 response = error.dump();
@@ -587,19 +558,14 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             if (!execute_remote) {
                 json body = {
                     {"ok", true},
-                    {"engine", "vram-cpp"},
-                    {"apiVersion", "0.1.0"},
-                    {"phase", "phase-2-prefix-parser"},
                     {"source", "huggingface"},
                     {"resolvedUrl", url},
-                    {"plannedRequests", planned},
-                    {"message", "HF range request planning is ready; set fetch.execute_remote=true to execute requests with platform backend (browser fetch in wasm, curl fallback in native)."}
+                    {"requests", planned}
                 };
                 response = body.dump();
                 return response.c_str();
             }
 
-            json attempts = json::array();
             uint64_t min_required = 0;
             std::string last_error;
 
@@ -611,27 +577,16 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 if (!ok_fetch) {
                     json error = {
                         {"ok", false},
-                        {"engine", "vram-cpp"},
-                        {"apiVersion", "0.1.0"},
-                        {"phase", "phase-2-prefix-parser"},
                         {"source", "huggingface"},
                         {"error", "hf_range_fetch_failed"},
                         {"detail", fetch_error},
-                        {"resolvedUrl", url},
-                        {"plannedRequests", planned},
-                        {"attempts", attempts}
+                        {"resolvedUrl", url}
                     };
                     response = error.dump();
                     return response.c_str();
                 }
 
                 const auto parsed_prefix = vram::parse_gguf_prefix(fetched.data(), fetched.size(), k_max_tensor_preview);
-                attempts.push_back({
-                    {"requestedBytes", req.end + 1},
-                    {"fetchedBytes", fetched.size()},
-                    {"status", parse_status_to_json(parsed_prefix.status)},
-                    {"minimumRequiredBytes", parsed_prefix.minimum_required_bytes}
-                });
 
                 if (parsed_prefix.status == vram::gguf_prefix_parse_status::complete) {
                     json tensors = json::array();
@@ -641,10 +596,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
                     json body = {
                         {"ok", true},
-                        {"engine", "vram-cpp"},
-                        {"apiVersion", "0.1.0"},
-                        {"phase", "phase-2-prefix-parser"},
-                        {"mode", parsed.contains("mode") ? parsed["mode"] : json("metadata")},
                         {"source", "huggingface"},
                         {"resolvedUrl", url},
                         {"metadata",
@@ -656,10 +607,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                                 {"tensorListTruncated", parsed_prefix.metadata.tensor_list_truncated},
                                 {"tensors", tensors},
                             }
-                        },
-                        {"plannedRequests", planned},
-                        {"attempts", attempts},
-                        {"fetchExecuted", true}
+                        }
                     };
                     response = body.dump();
                     return response.c_str();
@@ -676,16 +624,10 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
             json error = {
                 {"ok", false},
-                {"engine", "vram-cpp"},
-                {"apiVersion", "0.1.0"},
-                {"phase", "phase-2-prefix-parser"},
                 {"source", "huggingface"},
                 {"error", last_error.empty() ? "insufficient_prefix_bytes" : last_error},
                 {"minimumRequiredBytes", min_required},
-                {"resolvedUrl", url},
-                {"plannedRequests", planned},
-                {"attempts", attempts},
-                {"fetchExecuted", true}
+                {"resolvedUrl", url}
             };
             response = error.dump();
             return response.c_str();
@@ -693,9 +635,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
         json body = {
             {"ok", false},
-            {"engine", "vram-cpp"},
-            {"apiVersion", "0.1.0"},
-            {"phase", "phase-2-prefix-parser"},
             {"error", "unsupported_model_source"},
             {"supportedSources", {"local", "huggingface"}}
         };
@@ -706,7 +645,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     if (!model.contains("path") || !model["path"].is_string()) {
         json error = {
             {"ok", false},
-            {"phase", "phase-2-prefix-parser"},
             {"error", "model.path_required_for_local_source"}
         };
         response = error.dump();
@@ -723,7 +661,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     if (!get_file_size(path.c_str(), file_size)) {
         json error = {
             {"ok", false},
-            {"phase", "phase-2-prefix-parser"},
             {"error", "file_open_failed"},
             {"path", path}
         };
@@ -734,7 +671,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     if (file_size == 0) {
         json error = {
             {"ok", false},
-            {"phase", "phase-2-prefix-parser"},
             {"error", "file_empty"},
             {"path", path}
         };
@@ -746,14 +682,12 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     if (plan.empty()) {
         json error = {
             {"ok", false},
-            {"phase", "phase-2-prefix-parser"},
             {"error", "invalid_fetch_plan"}
         };
         response = error.dump();
         return response.c_str();
     }
 
-    json attempts = json::array();
     uint64_t min_required = 0;
     std::string last_error;
 
@@ -766,7 +700,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         if (!read_file_prefix(path.c_str(), requested_bytes, prefix)) {
             json error = {
                 {"ok", false},
-                {"phase", "phase-2-prefix-parser"},
                 {"error", "file_read_failed"},
                 {"requestedBytes", requested_bytes_u64},
                 {"path", path}
@@ -776,11 +709,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         }
 
         const auto parsed_prefix = vram::parse_gguf_prefix(prefix.data(), prefix.size(), k_max_tensor_preview);
-        attempts.push_back({
-            {"requestedBytes", requested_bytes_u64},
-            {"status", parse_status_to_json(parsed_prefix.status)},
-            {"minimumRequiredBytes", parsed_prefix.minimum_required_bytes}
-        });
 
         if (parsed_prefix.status == vram::gguf_prefix_parse_status::complete) {
             json tensors = json::array();
@@ -790,10 +718,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
             json body = {
                 {"ok", true},
-                {"engine", "vram-cpp"},
-                {"apiVersion", "0.1.0"},
-                {"phase", "phase-2-prefix-parser"},
-                {"mode", parsed.contains("mode") ? parsed["mode"] : json("metadata")},
                 {"source", "local"},
                 {"path", path},
                 {"metadata",
@@ -805,8 +729,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                         {"tensorListTruncated", parsed_prefix.metadata.tensor_list_truncated},
                         {"tensors", tensors},
                     }
-                },
-                {"attempts", attempts}
+                }
             };
 
             response = body.dump();
@@ -824,13 +747,9 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
     json error = {
         {"ok", false},
-        {"engine", "vram-cpp"},
-        {"apiVersion", "0.1.0"},
-        {"phase", "phase-2-prefix-parser"},
         {"error", last_error.empty() ? "insufficient_prefix_bytes" : last_error},
         {"path", path},
-        {"minimumRequiredBytes", min_required},
-        {"attempts", attempts}
+        {"minimumRequiredBytes", min_required}
     };
 
     response = error.dump();
@@ -838,9 +757,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     } catch (const std::exception & error) {
         response = json({
             {"ok", false},
-            {"engine", "vram-cpp"},
-            {"apiVersion", "0.1.0"},
-            {"phase", "phase-0-stub"},
             {"error", "predict_exception"},
             {"message", error.what()}
         }).dump();
@@ -848,9 +764,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     } catch (...) {
         response = json({
             {"ok", false},
-            {"engine", "vram-cpp"},
-            {"apiVersion", "0.1.0"},
-            {"phase", "phase-0-stub"},
             {"error", "predict_exception"},
             {"message", "unknown_exception"}
         }).dump();

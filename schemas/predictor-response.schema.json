@@ -4,46 +4,141 @@
   "title": "VRAM Predictor Response",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "engine", "apiVersion"],
+  "required": ["ok"],
   "properties": {
     "ok": { "type": "boolean" },
-    "engine": { "type": "string" },
-    "apiVersion": { "type": "string" },
-    "mode": { "type": "string" },
-    "warnings": {
+    "error": { "type": "string" },
+    "message": { "type": "string" },
+    "detail": { "type": "string" },
+    "source": { "type": "string" },
+    "path": { "type": "string" },
+    "resolvedUrl": { "type": "string" },
+    "supportedSources": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "minimumRequiredBytes": { "type": "integer" },
+    "requestedBytes": { "type": "integer" },
+    "requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": { "type": "string" },
+          "start": { "type": "integer" },
+          "end": { "type": "integer" },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "value": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "integer" },
+        "kvCount": { "type": "integer" },
+        "tensorCount": { "type": "integer" },
+        "bytesConsumed": { "type": "integer" },
+        "tensorListTruncated": { "type": "boolean" },
+        "tensors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "dimensions": {
+                "type": "array",
+                "items": { "type": "integer" }
+              },
+              "ggmlType": { "type": "integer" },
+              "dataOffset": { "type": "integer" }
+            }
+          }
+        }
+      }
     },
     "fit": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "binary": { "type": "string" },
         "executedInProcess": { "type": "boolean" },
-        "args": {
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "binary": { "type": "string" },
+            "args": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fitMiB": {
+              "type": "array",
+              "items": { "type": "integer" }
+            },
+            "targetFreeMiB": {
+              "type": "array",
+              "items": { "type": "integer" }
+            }
+          }
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deviceFreeMiB": {
+              "type": "array",
+              "items": { "type": "integer" }
+            },
+            "deviceTotalMiB": {
+              "type": "array",
+              "items": { "type": "integer" }
+            },
+            "hostFreeMiB": { "type": "integer" }
+          }
+        },
+        "showLogs": { "type": "boolean" },
+        "recommended": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "n_ctx": { "type": "integer" },
+            "n_gpu_layers": { "type": "integer" }
+          }
+        },
+        "status": { "type": "integer" },
+        "warnings": {
           "type": "array",
           "items": { "type": "string" }
         },
-        "fitTargetMiB": {
-          "type": "array",
-          "items": { "type": "integer" }
+        "memoryBytes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "weights": { "type": "integer" },
+            "kvCache": { "type": "integer" },
+            "device": { "type": "integer" },
+            "host": { "type": "integer" }
+          }
         },
-        "targetFreeMiB": {
-          "type": "array",
-          "items": { "type": "integer" }
-        },
-        "overrideDeviceFreeMiB": {
-          "type": "array",
-          "items": { "type": "integer" }
-        },
-        "overrideDeviceTotalMiB": {
-          "type": "array",
-          "items": { "type": "integer" }
-        },
-        "overrideHostFreeMiB": { "type": "integer" },
-        "executeNative": { "type": "boolean" },
-        "status": { "type": "integer" },
-        "memoryBreakdown": {
+        "breakdown": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -86,23 +181,7 @@
               }
             }
           }
-        },
-        "limitations": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "recommended_n_ctx": { "type": "integer" },
-        "recommended_n_gpu_layers": { "type": "integer" }
-      }
-    },
-    "memory": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "host_bytes": { "type": "integer" },
-        "device_bytes": { "type": "integer" },
-        "kv_cache_bytes": { "type": "integer" },
-        "weights_bytes": { "type": "integer" }
+        }
       }
     }
   }

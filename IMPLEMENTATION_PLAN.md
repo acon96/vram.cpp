@@ -244,9 +244,14 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Validated browser wasm metadata API against 3 additional vendored GGUF files (`ggml-vocab-gpt-neox`, `ggml-vocab-llama-spm`, `ggml-vocab-starcoder`) after increasing fetch cap.
   - [x] Extended vendor fit execution integration test to accept `VRAM_LLAMA_FIT_MODELS` (comma/semicolon list) for running the same assertions across 2-3 full model fixtures.
   - [x] Validated full-model native+wasm parity/execution paths for three fixtures: `gemma-3-270m-Q8_0.gguf`, `Qwen2.5-0.5B-Instruct.Q4_0.gguf`, and `gemma-3-1b-it-Q2_K.gguf`.
-14. [ ] Clean up the API surface to be simple and stable. remove unnecessary fields not required for the app to function or hard coded values. This will be a private, internal API interface so it doesn't need all the random metadata/wrapper stuff that it has now.
-14. [ ] Build a proper UI with a basic UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
-15. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
+14. [x] Clean up the API surface to be simple and stable. remove unnecessary fields not required for the app to function or hard coded values. This will be a private, internal API interface so it doesn't need all the random metadata/wrapper stuff that it has now.
+  - [x] Removed wrapper-oriented response fields (`phase`, `engine`, `apiVersion`, duplicated mode metadata, and descriptive limitations) from predictor responses.
+  - [x] Introduced a compact fit response contract with grouped keys (`targets`, `overrides`, `recommended`, `memoryBytes`, `breakdown`, `command`).
+  - [x] Updated predictor response schema and API tests to validate the simplified contract.
+  - [x] Consolidated `hf_range_plan` and `hf_range_fetch_helper` into a single helper module and removed duplicate files.
+  - [x] Revalidated native tests, vendor fit/parity tests, and wasm browser fit execution with the new contract.
+15. [ ] Build a proper UI with an actual UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
+16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 
 ## 10. Change Log
 
@@ -269,6 +274,8 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Verified browser wasm metadata requests across three additional vendored GGUF fixtures and adjusted fetch byte-cap assumptions to avoid false `insufficient_prefix_bytes` failures.
 - 2026-04-23: Updated vendor fit execution integration tests to support multi-model matrix runs via `VRAM_LLAMA_FIT_MODELS` while keeping `VRAM_LLAMA_FIT_MODEL` as a fallback.
 - 2026-04-23: Added requested full-model fixtures from QuantFactory (Qwen2.5-0.5B-Instruct Q4_0) and unsloth (gemma-3-1b-it Q2_K), then validated native fit execution + parity and browser wasm in-process fit across all three full-model fixtures.
+- 2026-04-23: Completed item 14 API-surface cleanup by simplifying predictor response shapes, updating schema/tests, and validating native+vendor+wasm behavior on full-model fixtures.
+- 2026-04-23: Merged `hf_range_plan` functionality into `hf_range_fetch_helper` and removed the redundant standalone range-plan module/files.
 - 2026-04-23: Began replacing fit-mode planning-only API responses with in-process execution wiring so the exported predictor API can directly consume the override-capable llama/common path.
 - 2026-04-23: Added a browser-side wasm helper that mounts local model bytes into the Emscripten FS and issues `fit.execute_in_process` requests against the vendor-enabled predictor module.
 - 2026-04-23: Added post-fit model/context instantiation inside the in-process API executor so fit responses now include detailed device and host model/context/compute breakdowns in both vendor-native and vendor-wasm builds.

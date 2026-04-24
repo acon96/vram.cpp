@@ -1,5 +1,5 @@
 #include "vram/gguf_prefix_parser.h"
-#include "vram/hf_range_plan.h"
+#include "vram/hf_range_fetch_helper.h"
 
 #include <cassert>
 #include <cstdio>

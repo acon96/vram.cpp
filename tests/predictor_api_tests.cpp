@@ -56,7 +56,6 @@ void test_local_fixture_parse() {
     const std::string body(response == nullptr ? "" : response);
 
     assert(contains(body, "\"ok\":true"));
-    assert(contains(body, "\"phase\":\"phase-2-prefix-parser\""));
     assert(contains(body, "\"version\":3"));
     assert(contains(body, "\"kvCount\":16"));
     assert(contains(body, "\"tensorCount\":0"));
@@ -87,7 +86,6 @@ void test_metadata_only_fixture_matrix() {
 
         assert(contains(body, "\"ok\":true"));
         assert(contains(body, "\"source\":\"local\""));
-        assert(contains(body, "\"phase\":\"phase-2-prefix-parser\""));
         assert(contains(body, "\"path\":\"" + path + "\""));
         assert(contains(body, "\"tensorCount\":0"));
     }
@@ -116,7 +114,7 @@ void test_hf_request_planning() {
     assert(contains(body, "\"ok\":true"));
     assert(contains(body, "\"source\":\"huggingface\""));
     assert(contains(body, "\"resolvedUrl\":\"https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf\""));
-    assert(contains(body, "\"plannedRequests\""));
+    assert(contains(body, "\"requests\""));
     assert(contains(body, "\"start\":0"));
     assert(contains(body, "\"end\":1023"));
 }
@@ -145,7 +143,7 @@ void test_hf_split_gguf_request_planning() {
     assert(contains(body, "\"source\":\"huggingface\""));
     assert(contains(body, "Llama-3.2-1B-Instruct-Q4_K_M-00001-of-00002.gguf"));
     assert(contains(body, "\"resolvedUrl\":\"https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M-00001-of-00002.gguf\""));
-    assert(contains(body, "\"plannedRequests\""));
+    assert(contains(body, "\"requests\""));
 }
 
 void test_fit_mode_command_planning() {
@@ -170,10 +168,9 @@ void test_fit_mode_command_planning() {
     const std::string body(response == nullptr ? "" : response);
 
     assert(contains(body, "\"ok\":true"));
-    assert(contains(body, "\"phase\":\"phase-4-fit-parity\""));
-    assert(contains(body, "\"binary\":\"vram_fit_harness\""));
+    assert(contains(body, "\"executedInProcess\":false"));
+    assert(contains(body, "\"command\":{\"binary\":\"vram_fit_harness\""));
     assert(contains(body, "\"args\""));
-    assert(contains(body, "\"executeNative\":false"));
     assert(contains(body, "--fit-target-mib"));
     assert(contains(body, "--target-free-mib"));
     assert(contains(body, "--override-device-free-mib"));
@@ -185,10 +182,8 @@ void test_fit_mode_command_planning() {
     assert(contains(body, "2048,1024"));
     assert(contains(body, "8192,6144"));
     assert(contains(body, "12288,8192"));
-    assert(contains(body, "\"fitTargetMiB\":[256,512]"));
-    assert(contains(body, "\"targetFreeMiB\":[2048,1024]"));
-    assert(contains(body, "\"overrideDeviceFreeMiB\":[8192,6144]"));
-    assert(contains(body, "\"overrideDeviceTotalMiB\":[12288,8192]"));
+    assert(contains(body, "\"targets\":{\"fitMiB\":[256,512],\"targetFreeMiB\":[2048,1024]}"));
+    assert(contains(body, "\"overrides\":{\"deviceFreeMiB\":[8192,6144],\"deviceTotalMiB\":[12288,8192],\"hostFreeMiB\":32768}"));
 }
 
 void test_fit_mode_heterogeneous_gpu_planning() {
@@ -214,12 +209,8 @@ void test_fit_mode_heterogeneous_gpu_planning() {
     const std::string body(response == nullptr ? "" : response);
 
     assert(contains(body, "\"ok\":true"));
-    assert(contains(body, "\"phase\":\"phase-4-fit-parity\""));
-    assert(contains(body, "\"fitTargetMiB\":[512,768,1024]"));
-    assert(contains(body, "\"targetFreeMiB\":[2048]"));
-    assert(contains(body, "\"overrideDeviceFreeMiB\":[8192,5120,20480]"));
-    assert(contains(body, "\"overrideDeviceTotalMiB\":[16384,12288,24576]"));
-    assert(contains(body, "\"overrideHostFreeMiB\":65536"));
+    assert(contains(body, "\"targets\":{\"fitMiB\":[512,768,1024],\"targetFreeMiB\":[2048]}"));
+    assert(contains(body, "\"overrides\":{\"deviceFreeMiB\":[8192,5120,20480],\"deviceTotalMiB\":[16384,12288,24576],\"hostFreeMiB\":65536}"));
 }
 
 } // namespace

@@ -52,7 +52,6 @@ add_library(vram_predictor_core STATIC
     src/predictor_api.cpp
     src/fit_executor.cpp
     src/gguf_prefix_parser.cpp
-    src/hf_range_plan.cpp
     src/hf_range_fetch_helper.cpp
 )
 

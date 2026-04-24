@@ -86,10 +86,9 @@ void test_optional_native_fit_parity() {
     const char * response = vram_predictor_predict_json(request.c_str());
     const std::string body(response == nullptr ? "" : response);
 
-    assert(contains(body, "\"phase\":\"phase-4-fit-parity\""));
-    assert(contains(body, "\"mode\":\"fit\""));
-    assert(contains(body, "\"executeNative\":false"));
-    assert(contains(body, "\"binary\":\"vram_fit_harness\""));
+    assert(contains(body, "\"ok\":true"));
+    assert(contains(body, "\"executedInProcess\":false"));
+    assert(contains(body, "\"command\":{\"binary\":\"vram_fit_harness\""));
 }
 
 } // namespace
