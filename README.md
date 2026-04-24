@@ -37,7 +37,7 @@ Expected artifacts:
 
 ## Next implementation steps
 
-1. Integrate llama.cpp as `vendor/llama-cpp`
-2. Build byte-range HTTP fetch helper over resolved HF URLs
-3. Connect GGUF prefix parser to predictor request flow
-4. Add first golden validation tests
+1. Connect GGUF prefix parser to predictor request flow
+2. Add native `llama-fit-params` parity golden tests for 2-3 full model fixtures
+3. Build byte-range HTTP fetch helper over resolved HF URLs
+4. Begin wiring wasm wrapper to llama fit internals

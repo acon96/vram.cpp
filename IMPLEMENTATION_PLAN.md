@@ -219,7 +219,8 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 1. [x] Create predictor API schema file (request/response JSON).
 2. [x] Add Emscripten target skeleton with one exported function returning version/system info.
 3. [x] Implement GGUF metadata parse prototype and iterative HF prefix range planning helper.
-4. [ ] Add first golden test comparing estimator vs native fit output for 2-3 GGUF models.
+4. [x] Add first golden fixture tests for GGUF metadata parsing on 3 vendored GGUF files.
+5. [ ] Add native `llama-fit-params` parity golden tests for 2-3 full model GGUF fixtures.
 
 ## 10. Change Log
 
@@ -229,3 +230,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Added llama.cpp as a git submodule at `vendor/llama-cpp` with optional CMake integration.
 - 2026-04-23: Switched API JSON serialization to nlohmann JSON from the vendored llama.cpp dependency.
 - 2026-04-23: Implemented GGUF prefix metadata parser and HF prefix range planning helper with parser unit tests.
+- 2026-04-23: Added golden regression tests using 3 vendored GGUF fixtures and split native fit parity testing into an explicit follow-up step requiring full model fixtures.

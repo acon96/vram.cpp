@@ -2,6 +2,7 @@
 #include "vram/hf_range_plan.h"
 
 #include <cassert>
+#include <cstdio>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -99,6 +100,81 @@ void test_range_plan_clamp() {
     assert(ranges.back().end == 127);
 }
 
+bool read_file_bytes(const char * path, std::vector<uint8_t> & out) {
+    FILE * fp = std::fopen(path, "rb");
+    if (fp == nullptr) {
+        return false;
+    }
+
+    if (std::fseek(fp, 0, SEEK_END) != 0) {
+        std::fclose(fp);
+        return false;
+    }
+
+    const long n = std::ftell(fp);
+    if (n < 0 || std::fseek(fp, 0, SEEK_SET) != 0) {
+        std::fclose(fp);
+        return false;
+    }
+
+    out.resize(static_cast<size_t>(n));
+    if (!out.empty()) {
+        const size_t read_n = std::fread(out.data(), 1, out.size(), fp);
+        if (read_n != out.size()) {
+            std::fclose(fp);
+            return false;
+        }
+    }
+
+    std::fclose(fp);
+    return true;
+}
+
+std::string resolve_fixture(const char * relative) {
+    const char * prefixes[] = {
+        "",
+        "../",
+        "../../",
+    };
+
+    for (const char * prefix : prefixes) {
+        std::string path(prefix);
+        path += relative;
+        FILE * fp = std::fopen(path.c_str(), "rb");
+        if (fp != nullptr) {
+            std::fclose(fp);
+            return path;
+        }
+    }
+
+    return "";
+}
+
+void test_golden_fixture(
+    const char * relative_path,
+    uint32_t expected_version,
+    uint64_t expected_kv,
+    uint64_t expected_tensors) {
+    const std::string path = resolve_fixture(relative_path);
+    assert(!path.empty());
+
+    std::vector<uint8_t> bytes;
+    const bool loaded = read_file_bytes(path.c_str(), bytes);
+    assert(loaded);
+
+    const auto result = vram::parse_gguf_prefix(bytes.data(), bytes.size());
+    assert(result.status == vram::gguf_prefix_parse_status::complete);
+    assert(result.metadata.version == expected_version);
+    assert(result.metadata.kv_count == expected_kv);
+    assert(result.metadata.tensor_count == expected_tensors);
+}
+
+void test_real_gguf_golden_fixtures() {
+    test_golden_fixture("vendor/llama-cpp/models/ggml-vocab-llama-bpe.gguf", 3, 20, 0);
+    test_golden_fixture("vendor/llama-cpp/models/ggml-vocab-gpt-2.gguf", 3, 16, 0);
+    test_golden_fixture("vendor/llama-cpp/models/ggml-vocab-qwen2.gguf", 3, 20, 0);
+}
+
 } // namespace
 
 int main() {
@@ -107,5 +183,6 @@ int main() {
     test_parse_invalid_magic();
     test_range_plan_growth();
     test_range_plan_clamp();
+    test_real_gguf_golden_fixtures();
     return 0;
 }
