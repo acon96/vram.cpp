@@ -11,16 +11,30 @@ Use links instead of duplicating details:
 - Project overview and baseline commands: [README.md](README.md)
 - Roadmap and progress tracking: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 - Emscripten setup and troubleshooting: [docs/EMSCRIPTEN_SETUP.md](docs/EMSCRIPTEN_SETUP.md)
-- API contracts: [schemas/predictor-request.schema.json](schemas/predictor-request.schema.json), [schemas/predictor-response.schema.json](schemas/predictor-response.schema.json)
+- API contracts (request + response shapes): [docs/API.md](docs/API.md)
 
 ## Repository Map
-- API bridge: `src/predictor_api.cpp`, `include/vram/predictor_api.h`
-- Prefix parser: `src/gguf_prefix_parser.cpp`, `include/vram/gguf_prefix_parser.h`
-- Hugging Face range planning/fetch: `src/hf_range_fetch_helper.cpp`, `include/vram/hf_range_fetch_helper.h`
-- In-process fit executor: `src/fit_executor.cpp`, `include/vram/fit_executor.h`
-- WASM entrypoint: `src/predictor_wasm_main.cpp`
-- Browser helper/smoke harness: `web/vram_predictor_browser.js`, `web/browser_helper_smoke.html`
-- Integration tests: `tests/`
+
+### C++ (`cpp/`)
+- API bridge: `cpp/src/predictor_api.cpp`, `cpp/include/vram/predictor_api.h`
+- Prefix parser: `cpp/src/gguf_prefix_parser.cpp`, `cpp/include/vram/gguf_prefix_parser.h`
+- Hugging Face range planning/fetch: `cpp/src/hf_range_fetch_helper.cpp`, `cpp/include/vram/hf_range_fetch_helper.h`
+- In-process fit executor: `cpp/src/fit_executor.cpp`, `cpp/include/vram/fit_executor.h`
+- WASM entrypoint: `cpp/src/predictor_wasm_main.cpp`
+- Native fit harness tool: `cpp/tools/vram_fit_harness.cpp`
+- Integration tests: `cpp/tests/`
+
+### Web / Browser interop (`web/`)
+- WASM JS helper: `web/vram_predictor_browser.js`
+- Smoke harness HTML: `web/browser_helper_smoke.html`
+
+### Frontend (`ui/`)
+- SvelteJS app: `ui/src/`
+- Main app component: `ui/src/App.svelte`
+- Parameter panel: `ui/src/components/ParamPanel.svelte`
+- File upload: `ui/src/components/FileUpload.svelte`
+- Results table: `ui/src/components/ResultsTable.svelte`
+- WASM predictor wrapper: `ui/src/lib/predictor.js`
 
 ## Build and Test Commands
 Use these first unless a task explicitly needs alternatives.
@@ -68,9 +82,9 @@ cmake --build build-wasm-vendor --target vram_predictor_wasm -j4
 - Fit shape should stay grouped (`targets`, `overrides`, `recommended`, `memoryBytes`, `breakdown`, optional `command`).
 - Metadata/HF planning should use lean keys (`source`, `resolvedUrl`, `requests`, `metadata`) without wrapper noise.
 - If API shape changes, update all of:
-  - `src/predictor_api.cpp`
-  - `schemas/predictor-response.schema.json`
-  - API tests under `tests/`
+  - `cpp/src/predictor_api.cpp`
+  - `docs/API.md`
+  - API tests under `cpp/tests/`
   - Browser helper assumptions in `web/vram_predictor_browser.js`
 
 ## First Session Notes (2026-04-23)

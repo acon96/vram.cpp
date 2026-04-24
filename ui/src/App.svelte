@@ -285,56 +285,58 @@
     </header>
 
     <main class="app-main">
-        <!-- Left: Config panel -->
-        <aside class="config-panel">
-            <section class="panel-section">
-                <h2 class="panel-title">Model</h2>
-                <FileUpload onfile={handleFile} />
-            </section>
+        <!-- Top row: Model input + Results side-by-side -->
+        <div class="top-row">
+            <div class="model-col">
+                <section class="panel-section">
+                    <h2 class="panel-title">Model</h2>
+                    <FileUpload onfile={handleFile} />
+                </section>
 
-            <section class="panel-section">
-                <h2 class="panel-title">Parameters</h2>
-                <ParamPanel {params} onchange={handleParamsChange} />
-            </section>
+                <div class="action-row">
+                    <button
+                        class="run-btn"
+                        type="button"
+                        onclick={runPrediction}
+                        disabled={isRunning || !selectedFile}
+                    >
+                        {#if isRunning}
+                            <span class="spinner" aria-hidden="true"></span>
+                            {statusLabel}
+                        {:else}
+                            ▶ Predict VRAM
+                        {/if}
+                    </button>
 
-            <div class="action-row">
-                <button
-                    class="run-btn"
-                    type="button"
-                    onclick={runPrediction}
-                    disabled={isRunning || !selectedFile}
-                >
-                    {#if isRunning}
-                        <span class="spinner" aria-hidden="true"></span>
-                        {statusLabel}
-                    {:else}
-                        ▶ Predict VRAM
+                    {#if status === 'error'}
+                        <p class="error-msg">{errorMsg}</p>
                     {/if}
-                </button>
-
-                {#if status === 'error'}
-                    <p class="error-msg">{errorMsg}</p>
-                {/if}
-            </div>
-        </aside>
-
-        <!-- Right: Results panel -->
-        <section class="results-panel">
-            <h2 class="panel-title">
-                Memory Breakdown
-                {#if status === 'done'}
-                    <span class="ok-badge">✓</span>
-                {/if}
-            </h2>
-
-            {#if isRunning}
-                <div class="loading-state">
-                    <span class="spinner lg" aria-hidden="true"></span>
-                    <p>{statusLabel}</p>
                 </div>
-            {:else}
-                <ResultsTable {result} />
-            {/if}
+            </div>
+
+            <section class="results-panel">
+                <h2 class="panel-title">
+                    Memory Breakdown
+                    {#if status === 'done'}
+                        <span class="ok-badge">✓</span>
+                    {/if}
+                </h2>
+
+                {#if isRunning}
+                    <div class="loading-state">
+                        <span class="spinner lg" aria-hidden="true"></span>
+                        <p>{statusLabel}</p>
+                    </div>
+                {:else}
+                    <ResultsTable {result} />
+                {/if}
+            </section>
+        </div>
+
+        <!-- Bottom: Parameters flowing left-to-right -->
+        <section class="panel-section params-section">
+            <h2 class="panel-title">Parameters</h2>
+            <ParamPanel {params} onchange={handleParamsChange} />
         </section>
     </main>
 
@@ -401,33 +403,39 @@
         width: 100%;
         margin: 0 auto;
         padding: 24px;
-        display: grid;
-        grid-template-columns: 360px 1fr;
-        gap: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
         box-sizing: border-box;
+    }
+
+    /* Top row: Model col (fixed) + Results panel (grows) */
+    .top-row {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 20px;
         align-items: start;
     }
 
-    @media (max-width: 900px) {
-        .app-main {
+    @media (max-width: 760px) {
+        .top-row {
             grid-template-columns: 1fr;
         }
     }
 
-    /* ── Config panel ── */
-    .config-panel {
+    .model-col {
         display: flex;
         flex-direction: column;
-        gap: 20px;
-        position: sticky;
-        top: 24px;
+        gap: 14px;
     }
 
-    @media (max-width: 900px) {
-        .config-panel {
-            position: static;
-        }
+    /* Parameters section spans the full width below */
+    .params-section {
+        width: 100%;
+        box-sizing: border-box;
     }
+
+    /* ── Config panel (removed — layout replaced by top-row + params-section) ── */
 
     .panel-section {
         background: var(--surface);

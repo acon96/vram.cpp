@@ -4,13 +4,13 @@
      *
      * @typedef {object} Params
      * @property {number}   nCtx
-    * @property {number}   nBatch
-    * @property {number}   nUbatch
+     * @property {number}   nBatch
+     * @property {number}   nUbatch
      * @property {string}   cacheTypeK
      * @property {string}   cacheTypeV
      * @property {number}   nGpuLayers
      * @property {number}   hostRamGiB
-        * @property {Array<{name?: string, index?: number, totalGiB: number, freeGiB: number}>} gpus
+     * @property {Array<{name?: string, index?: number, totalGiB: number, freeGiB: number}>} gpus
      * @property {number}   fitTargetMiB
      * @property {number}   targetFreeMiB
      */
@@ -19,6 +19,34 @@
     let { params, onchange } = $props();
 
     const KV_TYPES = ['f32', 'f16', 'bf16', 'q8_0', 'q4_0', 'q4_1', 'q5_0', 'q5_1', 'iq4_nl'];
+
+    // Snap points for the context slider — powers of 2 from 512 up to 256k, plus 400k.
+    const CTX_SNAP_POINTS = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 409600];
+
+    function ctxToSliderIndex(ctx) {
+        let closest = 0;
+        let minDist = Math.abs(CTX_SNAP_POINTS[0] - ctx);
+        for (let i = 1; i < CTX_SNAP_POINTS.length; i++) {
+            const dist = Math.abs(CTX_SNAP_POINTS[i] - ctx);
+            if (dist < minDist) {
+                minDist = dist;
+                closest = i;
+            }
+        }
+        return closest;
+    }
+
+    function onCtxSliderChange(e) {
+        const idx = parseInt(e.currentTarget.value, 10);
+        update({ nCtx: CTX_SNAP_POINTS[idx] });
+    }
+
+    function onCtxTextChange(e) {
+        const val = parseInt(e.currentTarget.value, 10);
+        if (!Number.isNaN(val) && val > 0) {
+            update({ nCtx: val });
+        }
+    }
 
     function update(patch) {
         onchange({ ...params, ...patch });
@@ -84,17 +112,30 @@
 
         <div class="field">
             <label for="n-ctx">Context length (n_ctx)</label>
-            <div class="input-row">
+            <div class="ctx-row">
                 <input
                     id="n-ctx"
                     type="range"
-                    min="512"
-                    max="131072"
-                    step="512"
-                    value={params.nCtx}
-                    oninput={(e) => update({ nCtx: parseInt(e.currentTarget.value) })}
+                    min="0"
+                    max={CTX_SNAP_POINTS.length - 1}
+                    step="1"
+                    value={ctxToSliderIndex(params.nCtx)}
+                    oninput={onCtxSliderChange}
                 />
-                <span class="value-badge">{params.nCtx.toLocaleString()}</span>
+                <input
+                    class="ctx-text"
+                    type="number"
+                    min="1"
+                    max="409600"
+                    step="1"
+                    value={params.nCtx}
+                    oninput={onCtxTextChange}
+                />
+            </div>
+            <div class="ctx-marks">
+                {#each CTX_SNAP_POINTS as pt}
+                    <span>{pt >= 1024 ? `${pt / 1024}k` : pt}</span>
+                {/each}
             </div>
         </div>
 
@@ -292,14 +333,18 @@
 <style>
     .param-panel {
         display: flex;
-        flex-direction: column;
+        flex-direction: row;
+        flex-wrap: wrap;
         gap: 24px;
+        align-items: start;
     }
 
     section {
         display: flex;
         flex-direction: column;
         gap: 12px;
+        flex: 1;
+        min-width: 220px;
     }
 
     h3 {
@@ -373,6 +418,36 @@
         display: flex;
         align-items: center;
         gap: 10px;
+    }
+
+    .ctx-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .ctx-row input[type='range'] {
+        flex: 1;
+    }
+
+    .ctx-text {
+        width: 90px !important;
+        flex-shrink: 0;
+        font-family: var(--mono);
+        font-size: 0.85rem !important;
+    }
+
+    .ctx-marks {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 2px;
+        padding: 0 2px;
+    }
+
+    .ctx-marks span {
+        font-size: 0.65rem;
+        color: var(--text-muted);
+        font-family: var(--mono);
     }
 
     .value-badge {

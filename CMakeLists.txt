@@ -35,7 +35,7 @@ endif()
 
 if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS AND NOT EMSCRIPTEN)
     add_executable(vram_fit_harness
-        tools/vram_fit_harness.cpp
+        cpp/tools/vram_fit_harness.cpp
     )
 
     target_include_directories(vram_fit_harness
@@ -55,15 +55,15 @@ if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS AND NOT EMSCRIPTEN)
 endif()
 
 add_library(vram_predictor_core STATIC
-    src/predictor_api.cpp
-    src/fit_executor.cpp
-    src/gguf_prefix_parser.cpp
-    src/hf_range_fetch_helper.cpp
+    cpp/src/predictor_api.cpp
+    cpp/src/fit_executor.cpp
+    cpp/src/gguf_prefix_parser.cpp
+    cpp/src/hf_range_fetch_helper.cpp
 )
 
 target_include_directories(vram_predictor_core
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include
 )
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/vendor/nlohmann/json.hpp")
@@ -97,7 +97,7 @@ endif()
 
 if(EMSCRIPTEN AND VRAM_BUILD_WASM)
     add_executable(vram_predictor_wasm
-        src/predictor_wasm_main.cpp
+        cpp/src/predictor_wasm_main.cpp
     )
 
     target_link_libraries(vram_predictor_wasm
@@ -119,7 +119,7 @@ if(EMSCRIPTEN AND VRAM_BUILD_WASM)
     )
 else()
     add_executable(vram_predictor_dev
-        src/predictor_wasm_main.cpp
+        cpp/src/predictor_wasm_main.cpp
     )
 
     target_link_libraries(vram_predictor_dev
@@ -132,7 +132,7 @@ if(VRAM_BUILD_TESTS)
     include(CTest)
     if(BUILD_TESTING)
         add_executable(vram_parser_tests
-            tests/parser_tests.cpp
+            cpp/tests/parser_tests.cpp
         )
 
         target_link_libraries(vram_parser_tests
@@ -143,7 +143,7 @@ if(VRAM_BUILD_TESTS)
         add_test(NAME vram_parser_tests COMMAND vram_parser_tests)
 
         add_executable(vram_api_tests
-            tests/predictor_api_tests.cpp
+            cpp/tests/predictor_api_tests.cpp
         )
 
         target_link_libraries(vram_api_tests
@@ -154,7 +154,7 @@ if(VRAM_BUILD_TESTS)
         add_test(NAME vram_api_tests COMMAND vram_api_tests)
 
         add_executable(vram_hf_helper_tests
-            tests/hf_range_fetch_helper_tests.cpp
+            cpp/tests/hf_range_fetch_helper_tests.cpp
         )
 
         target_link_libraries(vram_hf_helper_tests
@@ -165,7 +165,7 @@ if(VRAM_BUILD_TESTS)
         add_test(NAME vram_hf_helper_tests COMMAND vram_hf_helper_tests)
 
         add_executable(vram_llama_fit_parity_tests
-            tests/llama_fit_parity_tests.cpp
+            cpp/tests/llama_fit_parity_tests.cpp
         )
 
         target_link_libraries(vram_llama_fit_parity_tests
@@ -181,7 +181,7 @@ if(VRAM_BUILD_TESTS)
 
         if(VRAM_ENABLE_VENDOR_LLAMA)
             add_executable(vram_api_fit_execution_tests
-                tests/predictor_api_fit_execution_tests.cpp
+                cpp/tests/predictor_api_fit_execution_tests.cpp
             )
 
             target_link_libraries(vram_api_fit_execution_tests
