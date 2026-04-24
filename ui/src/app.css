@@ -27,6 +27,8 @@
     --warn-bg:         rgba(180, 83, 9, 0.08);
     --warn-text:       #92400e;
 
+    --input-bg:        #fffcf7;
+
     --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
     --mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
 
@@ -69,6 +71,8 @@
         --warn:            #fbbf24;
         --warn-bg:         rgba(251, 191, 36, 0.10);
         --warn-text:       #fde68a;
+
+        --input-bg:        #1a2018;
     }
 }
 

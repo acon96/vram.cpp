@@ -258,7 +258,6 @@
     }
 
     input[type='number'],
-    input[type='text'],
     select {
         width: 100%;
         box-sizing: border-box;

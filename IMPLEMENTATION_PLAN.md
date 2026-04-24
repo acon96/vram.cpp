@@ -251,6 +251,16 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Consolidated `hf_range_plan` and `hf_range_fetch_helper` into a single helper module and removed duplicate files.
   - [x] Revalidated native tests, vendor fit/parity tests, and wasm browser fit execution with the new contract.
 15. [ ] Build a proper UI with an actual UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
+  - [x] Selected Svelte 5 + Vite as the UI framework (`ui/` directory). Chosen for minimal bundle size, reactive primitives without heavy runtime, and straightforward GitHub Pages deployment.
+  - [x] Scaffolded `ui/` with Vite + Svelte template; cleaned up boilerplate, replaced `app.css` with project design tokens (warm cream / dark green palette, dark mode support).
+  - [x] Implemented `FileUpload.svelte` — drag-and-drop / file-picker for local `.gguf` files with file name + size display.
+  - [x] Implemented `ParamPanel.svelte` — runtime config (n_ctx slider, KV cache K/V type selectors, n_gpu_layers), host RAM, per-GPU VRAM (add/remove up to 4 GPUs), fit target MiB, and target free MiB fields.
+  - [x] Implemented `ResultsTable.svelte` — recommended n_ctx/GPU-layers chips, per-device memory breakdown table (model / KV cache / compute / total / capacity) with usage progress bars and colour-coded thresholds.
+  - [x] Wired all components in `App.svelte` with a two-column layout (config sidebar + results panel), async WASM loading via `initPredictor`, loading/error state display, and `predictMountedFit` integration.
+  - [x] Added `lib/predictor.js` — lazy WASM initialisation helper (loads script tag, dynamic-imports browser helper, caches client promise).
+  - [x] Added `lib/format.js` — MiB/GiB/byte conversion and display helpers.
+  - [x] Verified production build (`npm run build` in `ui/`) produces clean output with no errors.
+  - [ ] Wire up the `VITE_WASM_BASE_URL` → copy WASM artifacts into `ui/public/wasm/` as part of the GitHub Pages deploy pipeline (tracked under item 16).
 16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 
 ## 10. Change Log
@@ -280,3 +290,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Added a browser-side wasm helper that mounts local model bytes into the Emscripten FS and issues `fit.execute_in_process` requests against the vendor-enabled predictor module.
 - 2026-04-23: Added post-fit model/context instantiation inside the in-process API executor so fit responses now include detailed device and host model/context/compute breakdowns in both vendor-native and vendor-wasm builds.
 - 2026-04-23: Added explicit `fit.execute_in_process` API execution, validated it in a vendor-enabled native test path, and produced a successful vendor-enabled Emscripten build after aligning the predictor target with llama.cpp's wasm64 configuration.
+- 2026-04-24: Scaffolded Svelte 5 + Vite UI in `ui/` with FileUpload, ParamPanel, and ResultsTable components wired to the WASM predictor bridge; verified clean production build.
