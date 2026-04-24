@@ -1,6 +1,7 @@
 #include "vram/fit_executor.h"
 
 #include <algorithm>
+#include <exception>
 #include <cstdio>
 
 #if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
@@ -9,6 +10,7 @@
 
 #include "common.h"
 #include "fit.h"
+#include "log.h"
 #endif
 
 namespace vram {
@@ -43,13 +45,19 @@ bool collect_memory_breakdown(
         const common_fit_memory_override * memory_override,
         fit_execution_result & result,
         std::string & error) {
+    llama_context_params adjusted_context_params = context_params;
+#if defined(__EMSCRIPTEN__)
+    adjusted_context_params.n_threads = 1;
+    adjusted_context_params.n_threads_batch = 1;
+#endif
+
     llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (model == nullptr) {
         error = "failed_to_load_fitted_model";
         return false;
     }
 
-    llama_context * context = llama_init_from_model(model, context_params);
+    llama_context * context = llama_init_from_model(model, adjusted_context_params);
     if (context == nullptr) {
         llama_model_free(model);
         error = "failed_to_create_fitted_context";
@@ -217,16 +225,30 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     error = "fit_execution_unavailable_in_this_build";
     return false;
 #else
+    std::string phase = "initialization";
+    int original_common_log_verbosity = 0;
+    bool common_log_verbosity_overridden = false;
+
+    try {
     static const bool initialized = []() {
+#if defined(__EMSCRIPTEN__)
+        llama_log_set(discard_log_callback, nullptr);
+#else
         common_init();
+#endif
         llama_backend_init();
         return true;
     }();
     (void) initialized;
 
+    phase = "prepare_params";
     llama_model_params mparams = llama_model_default_params();
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = request.n_ctx;
+#if defined(__EMSCRIPTEN__)
+    cparams.n_threads = 1;
+    cparams.n_threads_batch = 1;
+#endif
     mparams.n_gpu_layers = request.n_gpu_layers;
 
     std::vector<float> tensor_split(llama_max_devices(), 0.0f);
@@ -241,9 +263,11 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     std::vector<uint64_t> source_free_mib;
 
     if (!request.target_free_mib.empty()) {
+        phase = "resolve_target_free";
         if (!request.override_device_free_mib.empty()) {
             source_free_mib = request.override_device_free_mib;
         } else {
+            phase = "detect_device_free_memory";
             source_free_mib = detect_device_free_mib(request.model_path, error);
             if (source_free_mib.empty()) {
                 return false;
@@ -271,6 +295,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     common_fit_memory_override memory_override = {0, nullptr, false, {0, 0}};
     bool use_memory_override = false;
 
+    phase = "prepare_memory_override";
     if (!request.override_device_free_mib.empty()) {
         std::vector<uint64_t> totals_mib = request.override_device_total_mib;
         if (totals_mib.empty()) {
@@ -316,10 +341,21 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     ggml_log_callback original_log_callback = nullptr;
     void * original_log_user_data = nullptr;
     if (!request.show_fit_logs) {
+        phase = "install_quiet_logger";
         llama_log_get(&original_log_callback, &original_log_user_data);
         llama_log_set(discard_log_callback, nullptr);
     }
 
+#if defined(__EMSCRIPTEN__)
+    if (!request.show_fit_logs) {
+        phase = "suppress_common_fit_logs";
+        original_common_log_verbosity = common_log_get_verbosity_thold();
+        common_log_set_verbosity_thold(-1);
+        common_log_verbosity_overridden = true;
+    }
+#endif
+
+    phase = use_memory_override ? "run_fit_with_override" : "run_fit";
     const common_params_fit_status status = use_memory_override
         ? common_fit_params_with_memory_override(
             request.model_path.c_str(),
@@ -342,7 +378,12 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
             request.min_ctx,
             GGML_LOG_LEVEL_ERROR);
 
+    if (common_log_verbosity_overridden) {
+        common_log_set_verbosity_thold(original_common_log_verbosity);
+    }
+
     if (!request.show_fit_logs) {
+        phase = "restore_logger";
         llama_log_set(original_log_callback, original_log_user_data);
     }
 
@@ -368,6 +409,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     }
 
     if (result.ok) {
+        phase = "collect_memory_breakdown";
         const common_fit_memory_override * breakdown_override = use_memory_override ? &memory_override : nullptr;
         if (!collect_memory_breakdown(request.model_path, mparams, cparams, breakdown_override, result, error)) {
             return false;
@@ -375,6 +417,19 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     }
 
     return true;
+    } catch (const std::exception & exception) {
+        if (common_log_verbosity_overridden) {
+            common_log_set_verbosity_thold(original_common_log_verbosity);
+        }
+        error = "fit_execution_exception[" + phase + "]: " + exception.what();
+        return false;
+    } catch (...) {
+        if (common_log_verbosity_overridden) {
+            common_log_set_verbosity_thold(original_common_log_verbosity);
+        }
+        error = "fit_execution_exception[" + phase + "]: unknown_exception";
+        return false;
+    }
 #endif
 }
 

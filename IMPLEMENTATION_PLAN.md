@@ -227,7 +227,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Added optional parity test comparing harness + llama-fit-params outputs when fixture/binaries are provided via env vars.
   - [x] Executed first real fixture parity run on `gemma-3-270m-Q8_0.gguf`.
   - [x] Added reusable llama/common patch for overriding detected device/host free memory during fit.
-  - [ ] Add 1-2 additional full-model fixtures to complete this item.
+  - [x] Added and validated two additional full-model fixtures: `Qwen2.5-0.5B-Instruct.Q4_0.gguf` and `gemma-3-1b-it-Q2_K.gguf`.
 7. [x] Build HF URL resolution + progressive byte-range request planning helper and wire it to `model.source = huggingface` request handling.
 8. [x] Execute remote HF range fetch loop and feed downloaded prefixes into parser.
 9. [x] Begin wiring in-process predictor API execution for llama-fit override mode so the exported API can return actual fitted results instead of planning-only output.
@@ -236,10 +236,17 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Validate the execution path in a vendor-enabled native build and carry the same surface into a vendor-enabled wasm build.
 10. [x] Return detailed model/context/compute memory breakdowns from the in-process API path instead of fitted parameters only.
 11. [x] Add a JS-side wasm integration flow that mounts model bytes and calls `fit.execute_in_process`.
-12. Put together a simple html UI page that can exercise the wasm predictor API with local file and HF URL inputs and display the output breakdowns and fit recommendations.
-13. Add more fixtures and edge cases to the test suite, including split GGUF models, metadata-only files, and heterogeneous systems.
-14. Build a proper UI with a basic UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
-15. Set up github actions to build and deploy the app to a GitHub Pages site to grab any new llama.cpp model architectures (run nightly)
+12. [x] Put together a simple html UI page that can exercise the wasm predictor API with local file and HF URL inputs and display the output breakdowns and fit recommendations.
+13. [ ] Add more fixtures and edge cases to the test suite, including split GGUF models, metadata-only files, and heterogeneous systems.
+  - [x] Added predictor API edge-case coverage for metadata-only GGUF fixtures using multiple vocab-only model files.
+  - [x] Added split-shard Hugging Face planning coverage for `-00001-of-00002.gguf` request flows.
+  - [x] Added heterogeneous multi-GPU fit planning coverage with mixed free/total device memory overrides.
+  - [x] Validated browser wasm metadata API against 3 additional vendored GGUF files (`ggml-vocab-gpt-neox`, `ggml-vocab-llama-spm`, `ggml-vocab-starcoder`) after increasing fetch cap.
+  - [x] Extended vendor fit execution integration test to accept `VRAM_LLAMA_FIT_MODELS` (comma/semicolon list) for running the same assertions across 2-3 full model fixtures.
+  - [x] Validated full-model native+wasm parity/execution paths for three fixtures: `gemma-3-270m-Q8_0.gguf`, `Qwen2.5-0.5B-Instruct.Q4_0.gguf`, and `gemma-3-1b-it-Q2_K.gguf`.
+14. [ ] Clean up the API surface to be simple and stable. remove unnecessary fields not required for the app to function or hard coded values. This will be a private, internal API interface so it doesn't need all the random metadata/wrapper stuff that it has now.
+14. [ ] Build a proper UI with a basic UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
+15. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 
 ## 10. Change Log
 
@@ -257,6 +264,11 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Replaced executable-driven fit orchestration in predictor API with harness planning semantics and added a native in-process fit harness (`vram_fit_harness`) linked to llama/common code.
 - 2026-04-23: Built and ran first native parity comparison using `gemma-3-270m-Q8_0.gguf` against `llama-fit-params`.
 - 2026-04-23: Added a maintainable vendor patch to llama/common fit APIs so predictor requests and the native harness can override detected host/device memory for deterministic hardware targeting.
+- 2026-04-23: Fixed browser in-process wasm fit execution path by suppressing threaded common-fit logger usage under Emscripten and verified successful browser-side fit execution against the local Gemma fixture.
+- 2026-04-23: Started implementation item 13 by adding API tests for metadata-only GGUF fixtures, split-shard HF request planning, and heterogeneous multi-GPU planning scenarios.
+- 2026-04-23: Verified browser wasm metadata requests across three additional vendored GGUF fixtures and adjusted fetch byte-cap assumptions to avoid false `insufficient_prefix_bytes` failures.
+- 2026-04-23: Updated vendor fit execution integration tests to support multi-model matrix runs via `VRAM_LLAMA_FIT_MODELS` while keeping `VRAM_LLAMA_FIT_MODEL` as a fallback.
+- 2026-04-23: Added requested full-model fixtures from QuantFactory (Qwen2.5-0.5B-Instruct Q4_0) and unsloth (gemma-3-1b-it Q2_K), then validated native fit execution + parity and browser wasm in-process fit across all three full-model fixtures.
 - 2026-04-23: Began replacing fit-mode planning-only API responses with in-process execution wiring so the exported predictor API can directly consume the override-capable llama/common path.
 - 2026-04-23: Added a browser-side wasm helper that mounts local model bytes into the Emscripten FS and issues `fit.execute_in_process` requests against the vendor-enabled predictor module.
 - 2026-04-23: Added post-fit model/context instantiation inside the in-process API executor so fit responses now include detailed device and host model/context/compute breakdowns in both vendor-native and vendor-wasm builds.

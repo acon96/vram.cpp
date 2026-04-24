@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -61,6 +62,37 @@ void test_local_fixture_parse() {
     assert(contains(body, "\"tensorCount\":0"));
 }
 
+void test_metadata_only_fixture_matrix() {
+    const std::vector<std::string> fixture_paths = {
+        "vendor/llama-cpp/models/ggml-vocab-gpt-neox.gguf",
+        "vendor/llama-cpp/models/ggml-vocab-llama-spm.gguf",
+        "vendor/llama-cpp/models/ggml-vocab-starcoder.gguf",
+    };
+
+    for (const std::string & fixture_relative : fixture_paths) {
+        const std::string path = resolve_fixture(fixture_relative.c_str());
+        assert(!path.empty());
+
+        const std::string request =
+            "{"
+            "\"mode\":\"metadata\","
+            "\"model\":{\"source\":\"local\",\"path\":\"" + path + "\"},"
+            "\"runtime\":{\"n_ctx\":1024,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+            "\"device\":{\"host_ram_bytes\":34359738368},"
+            "\"fetch\":{\"initial_bytes\":1024,\"max_bytes\":4194304,\"growth_factor\":2.0}"
+            "}";
+
+        const char * response = vram_predictor_predict_json(request.c_str());
+        const std::string body(response == nullptr ? "" : response);
+
+        assert(contains(body, "\"ok\":true"));
+        assert(contains(body, "\"source\":\"local\""));
+        assert(contains(body, "\"phase\":\"phase-2-prefix-parser\""));
+        assert(contains(body, "\"path\":\"" + path + "\""));
+        assert(contains(body, "\"tensorCount\":0"));
+    }
+}
+
 void test_hf_request_planning() {
     const std::string request =
         "{"
@@ -87,6 +119,33 @@ void test_hf_request_planning() {
     assert(contains(body, "\"plannedRequests\""));
     assert(contains(body, "\"start\":0"));
     assert(contains(body, "\"end\":1023"));
+}
+
+void test_hf_split_gguf_request_planning() {
+    const std::string request =
+        "{"
+        "\"mode\":\"metadata\","
+        "\"model\":{"
+            "\"source\":\"huggingface\","
+            "\"huggingFace\":{"
+                "\"repo\":\"bartowski/Llama-3.2-1B-Instruct-GGUF\","
+                "\"file\":\"Llama-3.2-1B-Instruct-Q4_K_M-00001-of-00002.gguf\","
+                "\"revision\":\"main\""
+            "}"
+        "},"
+        "\"runtime\":{\"n_ctx\":1024,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{\"host_ram_bytes\":34359738368},"
+        "\"fetch\":{\"initial_bytes\":1024,\"max_bytes\":4096,\"growth_factor\":2.0}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":true"));
+    assert(contains(body, "\"source\":\"huggingface\""));
+    assert(contains(body, "Llama-3.2-1B-Instruct-Q4_K_M-00001-of-00002.gguf"));
+    assert(contains(body, "\"resolvedUrl\":\"https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M-00001-of-00002.gguf\""));
+    assert(contains(body, "\"plannedRequests\""));
 }
 
 void test_fit_mode_command_planning() {
@@ -132,12 +191,46 @@ void test_fit_mode_command_planning() {
     assert(contains(body, "\"overrideDeviceTotalMiB\":[12288,8192]"));
 }
 
+void test_fit_mode_heterogeneous_gpu_planning() {
+    const std::string request =
+        "{"
+        "\"mode\":\"fit\","
+        "\"model\":{\"source\":\"local\",\"path\":\"/tmp/hetero.gguf\"},"
+        "\"runtime\":{\"n_ctx\":4096,\"n_gpu_layers\":-1,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{"
+            "\"host_ram_bytes\":68719476736,"
+            "\"fit_target_mib\":[512,768,1024],"
+            "\"target_free_mib\":[2048],"
+            "\"gpus\":["
+                "{\"id\":\"gpu0\",\"free_bytes\":8589934592,\"total_bytes\":17179869184},"
+                "{\"id\":\"gpu1\",\"free_bytes\":5368709120,\"total_bytes\":12884901888},"
+                "{\"id\":\"gpu2\",\"free_bytes\":21474836480,\"total_bytes\":25769803776}"
+            "]"
+        "},"
+        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\",\"min_ctx\":1024}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":true"));
+    assert(contains(body, "\"phase\":\"phase-4-fit-parity\""));
+    assert(contains(body, "\"fitTargetMiB\":[512,768,1024]"));
+    assert(contains(body, "\"targetFreeMiB\":[2048]"));
+    assert(contains(body, "\"overrideDeviceFreeMiB\":[8192,5120,20480]"));
+    assert(contains(body, "\"overrideDeviceTotalMiB\":[16384,12288,24576]"));
+    assert(contains(body, "\"overrideHostFreeMiB\":65536"));
+}
+
 } // namespace
 
 int main() {
     test_invalid_json();
     test_local_fixture_parse();
+    test_metadata_only_fixture_matrix();
     test_hf_request_planning();
+    test_hf_split_gguf_request_planning();
     test_fit_mode_command_planning();
+    test_fit_mode_heterogeneous_gpu_planning();
     return 0;
 }

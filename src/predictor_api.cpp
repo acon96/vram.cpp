@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <exception>
 #include <cstdio>
 #include <cstdint>
 #include <string>
@@ -197,6 +198,7 @@ json fit_memory_entry_to_json(const vram::fit_memory_breakdown_entry & entry) {
 
 extern "C" const char * vram_predictor_get_system_info_json(void) {
     static std::string response;
+    try {
 #ifdef __EMSCRIPTEN__
     const char * target = "wasm32-emscripten";
 #else
@@ -219,11 +221,28 @@ extern "C" const char * vram_predictor_get_system_info_json(void) {
     };
 
     response = body.dump();
+    } catch (const std::exception & error) {
+        response = json({
+            {"ok", false},
+            {"phase", "phase-0-stub"},
+            {"error", "system_info_exception"},
+            {"message", error.what()}
+        }).dump();
+    } catch (...) {
+        response = json({
+            {"ok", false},
+            {"phase", "phase-0-stub"},
+            {"error", "system_info_exception"},
+            {"message", "unknown_exception"}
+        }).dump();
+    }
+
     return response.c_str();
 }
 
 extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     static std::string response;
+    try {
     if (request_json == nullptr) {
         json error = {
             {"ok", false},
@@ -816,4 +835,25 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
     response = error.dump();
     return response.c_str();
+    } catch (const std::exception & error) {
+        response = json({
+            {"ok", false},
+            {"engine", "vram-cpp"},
+            {"apiVersion", "0.1.0"},
+            {"phase", "phase-0-stub"},
+            {"error", "predict_exception"},
+            {"message", error.what()}
+        }).dump();
+        return response.c_str();
+    } catch (...) {
+        response = json({
+            {"ok", false},
+            {"engine", "vram-cpp"},
+            {"apiVersion", "0.1.0"},
+            {"phase", "phase-0-stub"},
+            {"error", "predict_exception"},
+            {"message", "unknown_exception"}
+        }).dump();
+        return response.c_str();
+    }
 }

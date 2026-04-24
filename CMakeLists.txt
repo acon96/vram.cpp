@@ -15,7 +15,9 @@ option(VRAM_BUILD_TESTS "Build local unit tests" ON)
 option(VRAM_BUILD_FIT_HARNESS "Build native in-process llama-fit harness (requires vendor llama enabled)" ON)
 
 if(EMSCRIPTEN AND VRAM_ENABLE_VENDOR_LLAMA)
+    add_compile_options("-fexceptions")
     add_compile_options("-sMEMORY64=1")
+    add_link_options("-sNO_DISABLE_EXCEPTION_CATCHING")
     add_link_options("-sMEMORY64=1")
 endif()
 
