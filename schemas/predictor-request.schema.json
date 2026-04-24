@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vram-cpp.local/schemas/predictor-request.schema.json",
+  "title": "VRAM Predictor Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "model", "runtime", "device"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["metadata", "fit"],
+      "description": "Prediction mode: metadata-first estimator or full llama-fit projection."
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["local", "huggingface"]
+        },
+        "path": {
+          "type": "string",
+          "description": "Local file path or virtual path in wasm FS."
+        },
+        "huggingFace": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo": { "type": "string" },
+            "file": { "type": "string" },
+            "revision": { "type": "string" }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n_ctx", "cache_type_k", "cache_type_v"],
+      "properties": {
+        "n_ctx": { "type": "integer", "minimum": 1 },
+        "n_batch": { "type": "integer", "minimum": 1 },
+        "n_ubatch": { "type": "integer", "minimum": 1 },
+        "cache_type_k": { "type": "string" },
+        "cache_type_v": { "type": "string" },
+        "n_gpu_layers": { "type": "integer", "minimum": -1 }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_ram_bytes"],
+      "properties": {
+        "host_ram_bytes": { "type": "integer", "minimum": 0 },
+        "gpus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "free_bytes"],
+            "properties": {
+              "id": { "type": "string" },
+              "free_bytes": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

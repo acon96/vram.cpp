@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vram-cpp.local/schemas/predictor-response.schema.json",
+  "title": "VRAM Predictor Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "engine", "apiVersion"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "engine": { "type": "string" },
+    "apiVersion": { "type": "string" },
+    "mode": { "type": "string" },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "fit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recommended_n_ctx": { "type": "integer" },
+        "recommended_n_gpu_layers": { "type": "integer" }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host_bytes": { "type": "integer" },
+        "device_bytes": { "type": "integer" },
+        "kv_cache_bytes": { "type": "integer" },
+        "weights_bytes": { "type": "integer" }
+      }
+    }
+  }
+}

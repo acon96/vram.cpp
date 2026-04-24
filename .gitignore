@@ -1,0 +1,8 @@
+# Build outputs
+build/
+out/
+cmake-build-*/
+
+# Tooling artifacts
+.DS_Store
+.vscode/

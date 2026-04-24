@@ -1,0 +1,111 @@
+#include "vram/gguf_prefix_parser.h"
+#include "vram/hf_range_plan.h"
+
+#include <cassert>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace {
+
+void write_u32(std::vector<uint8_t> & out, uint32_t value) {
+    out.push_back(static_cast<uint8_t>(value & 0xff));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xff));
+    out.push_back(static_cast<uint8_t>((value >> 16) & 0xff));
+    out.push_back(static_cast<uint8_t>((value >> 24) & 0xff));
+}
+
+void write_u64(std::vector<uint8_t> & out, uint64_t value) {
+    for (int i = 0; i < 8; ++i) {
+        out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xff));
+    }
+}
+
+void write_string(std::vector<uint8_t> & out, const std::string & value) {
+    write_u64(out, static_cast<uint64_t>(value.size()));
+    out.insert(out.end(), value.begin(), value.end());
+}
+
+std::vector<uint8_t> build_minimal_valid_prefix() {
+    std::vector<uint8_t> bytes;
+
+    bytes.push_back('G');
+    bytes.push_back('G');
+    bytes.push_back('U');
+    bytes.push_back('F');
+
+    write_u32(bytes, 3);
+    write_u64(bytes, 1); // tensors
+    write_u64(bytes, 1); // kv pairs
+
+    write_string(bytes, "general.architecture");
+    write_u32(bytes, 8); // GGUF_TYPE_STRING
+    write_string(bytes, "llama");
+
+    write_string(bytes, "tok_embeddings.weight");
+    write_u32(bytes, 2); // n_dims
+    write_u64(bytes, 64);
+    write_u64(bytes, 32);
+    write_u32(bytes, 0); // ggml_type
+    write_u64(bytes, 0); // offset
+
+    return bytes;
+}
+
+void test_parse_complete_prefix() {
+    const std::vector<uint8_t> bytes = build_minimal_valid_prefix();
+    const auto result = vram::parse_gguf_prefix(bytes.data(), bytes.size());
+
+    assert(result.status == vram::gguf_prefix_parse_status::complete);
+    assert(result.metadata.version == 3);
+    assert(result.metadata.kv_count == 1);
+    assert(result.metadata.tensor_count == 1);
+    assert(result.metadata.tensors.size() == 1);
+    assert(result.metadata.tensors[0].name == "tok_embeddings.weight");
+    assert(result.metadata.tensors[0].dimensions.size() == 2);
+    assert(result.metadata.tensors[0].dimensions[0] == 64);
+    assert(result.metadata.tensors[0].dimensions[1] == 32);
+}
+
+void test_parse_need_more_data() {
+    const std::vector<uint8_t> bytes = build_minimal_valid_prefix();
+    const size_t cut = bytes.size() - 5;
+    const auto result = vram::parse_gguf_prefix(bytes.data(), cut);
+
+    assert(result.status == vram::gguf_prefix_parse_status::need_more_data);
+    assert(result.minimum_required_bytes > cut);
+}
+
+void test_parse_invalid_magic() {
+    const std::vector<uint8_t> bytes = {0, 1, 2, 3, 4, 5, 6, 7};
+    const auto result = vram::parse_gguf_prefix(bytes.data(), bytes.size());
+
+    assert(result.status == vram::gguf_prefix_parse_status::invalid_format);
+}
+
+void test_range_plan_growth() {
+    const auto ranges = vram::build_hf_prefix_range_plan(1024, 8192, 2.0);
+    assert(ranges.size() == 4);
+    assert(ranges[0].start == 0 && ranges[0].end == 1023);
+    assert(ranges[1].start == 0 && ranges[1].end == 2047);
+    assert(ranges[2].start == 0 && ranges[2].end == 4095);
+    assert(ranges[3].start == 0 && ranges[3].end == 8191);
+}
+
+void test_range_plan_clamp() {
+    const auto ranges = vram::build_hf_prefix_range_plan(0, 128, 1.5);
+    assert(!ranges.empty());
+    assert(ranges.front().start == 0);
+    assert(ranges.back().end == 127);
+}
+
+} // namespace
+
+int main() {
+    test_parse_complete_prefix();
+    test_parse_need_more_data();
+    test_parse_invalid_magic();
+    test_range_plan_growth();
+    test_range_plan_clamp();
+    return 0;
+}
