@@ -39,7 +39,6 @@ add_library(vram_predictor_core STATIC
     cpp/src/fit_executor.cpp
     cpp/src/sim_backend.cpp
     cpp/src/gguf_prefix_parser.cpp
-    cpp/src/hf_range_fetch_helper.cpp
 )
 
 target_include_directories(vram_predictor_core
@@ -145,17 +144,6 @@ if(VRAM_BUILD_TESTS)
         )
 
         add_test(NAME vram_api_tests COMMAND vram_api_tests)
-
-        add_executable(vram_hf_helper_tests
-            cpp/tests/hf_range_fetch_helper_tests.cpp
-        )
-
-        target_link_libraries(vram_hf_helper_tests
-            PRIVATE
-                vram_predictor_core
-        )
-
-        add_test(NAME vram_hf_helper_tests COMMAND vram_hf_helper_tests)
 
         add_executable(vram_llama_fit_parity_tests
             cpp/tests/llama_fit_parity_tests.cpp

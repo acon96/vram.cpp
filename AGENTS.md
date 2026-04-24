@@ -27,7 +27,6 @@ Use links instead of duplicating details:
 ### C++ (`cpp/`)
 - API bridge: `cpp/src/predictor_api.cpp`, `cpp/include/vram/predictor_api.h`
 - Prefix parser: `cpp/src/gguf_prefix_parser.cpp`, `cpp/include/vram/gguf_prefix_parser.h`
-- Hugging Face range planning/fetch: `cpp/src/hf_range_fetch_helper.cpp`, `cpp/include/vram/hf_range_fetch_helper.h`
 - In-process fit executor: `cpp/src/fit_executor.cpp`, `cpp/include/vram/fit_executor.h`
 - Simulated ggml backend: `cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`
 - WASM entrypoint: `cpp/src/predictor_wasm_main.cpp`
@@ -38,7 +37,6 @@ Use links instead of duplicating details:
 ### C++ test surfaces (`cpp/tests/`)
 - Parser coverage: `parser_tests.cpp`
 - Predictor API contract coverage: `predictor_api_tests.cpp`
-- HF helper coverage: `hf_range_fetch_helper_tests.cpp`
 - Optional native llama fit parity coverage: `llama_fit_parity_tests.cpp`
 - Vendor-enabled in-process fit execution coverage: `predictor_api_fit_execution_tests.cpp`
 
@@ -137,7 +135,7 @@ npm run build
 - WASM fit execution should keep fit logging conservative by default even though the sync-log patch exists.
 - Metadata-only GGUF fixtures may require larger prefix caps; 4 MiB avoided false `insufficient_prefix_bytes` failures for some vocab models.
 - When terminal buffers look stale, trust fresh build/test/browser reruns over old terminal scrollback.
-- `hf_range_plan` was merged into `hf_range_fetch_helper`; keep a single helper surface (no duplicate planning modules).
+- HF remote fetch execution is intentionally JS-side in browser flows; C++ keeps local parsing and HF request planning only.
 - Compact response contract is now validated in native, vendor, and browser wasm paths; preserve this as the baseline for UI and API follow-up work.
 
 ## Editing and Commit Practices

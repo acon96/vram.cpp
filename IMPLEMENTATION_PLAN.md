@@ -248,7 +248,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Removed wrapper-oriented response fields (`phase`, `engine`, `apiVersion`, duplicated mode metadata, and descriptive limitations) from predictor responses.
   - [x] Introduced a compact fit response contract with grouped keys (`targets`, `overrides`, `recommended`, `memoryBytes`, `breakdown`, `command`).
   - [x] Updated predictor response schema and API tests to validate the simplified contract.
-  - [x] Consolidated `hf_range_plan` and `hf_range_fetch_helper` into a single helper module and removed duplicate files.
+  - [x] Consolidated duplicate HF prefix range-planning logic into a single internal implementation and removed redundant files.
   - [x] Revalidated native tests, vendor fit/parity tests, and wasm browser fit execution with the new contract.
 15. [x] Build a proper UI with an actual UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
   - [x] Selected Svelte 5 + Vite as the UI framework (`ui/` directory). Chosen for minimal bundle size, reactive primitives without heavy runtime, and straightforward GitHub Pages deployment.
@@ -264,10 +264,10 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Wired `VITE_WASM_BASE_URL` to accept full asset URLs (cross-port local dev) or relative paths (static hosting), and added a dedicated local assets server script that serves wasm/helper files in place without copy steps.
   - [x] Hardened `n_gpu_layers` UI handling so `-1` is preserved as "all layers on GPU" instead of drifting through invalid intermediate numeric states.
   - [x] Added a raw JSON harness view at `/?view=harness` so wasm requests can be pasted, submitted, and inspected directly through the Svelte app.
-16. [ ] Finish wiring up ability to select models from HuggingFace repos directly in the UI, using the existing HF cache API to resolve model files and feeding them into the same header-range-fetch + parse flow used by the API tests.
-  - [ ] Need to have a UI Component that lets you search for models and then populate a list of potential GGUF files to select from.
-  - [ ] Should attempt to run the range fetch + parse flow on the selected file and display any errors or metadata results in the UI, and then allow the user to submit it to the predictor API once the metadata is successfully parsed.
-  - [ ] On the UI it should live next to the file upload at the top as a "Upload" OR "Search on HF" layout
+16. [x] Finish wiring up ability to select models from HuggingFace repos directly in the UI, using the existing HF cache API to resolve model files and feeding them into the same header-range-fetch + parse flow used by the API tests.
+  - [x] Added a `HuggingFaceSearch` UI component that searches HF repos and loads candidate `.gguf` files from the selected repo/revision tree.
+  - [x] Wired a metadata validation preflight that runs browser-side range fetch + parser calls through the wasm worker and surfaces errors/metadata in the UI.
+  - [x] Updated the model input layout to an explicit top-level "Upload" OR "Search on HF" switch next to existing upload flow.
 17. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 18. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
   - [x] Added a new simulated backend module (`cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`) that exposes profile-aware fake ggml GPU devices (CUDA/Metal/Vulkan/Generic) with configurable free/total memory and null-terminated `ggml_backend_dev_t *` wiring for `llama_model_params.devices`.
@@ -301,7 +301,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Updated vendor fit execution integration tests to support multi-model matrix runs via `VRAM_LLAMA_FIT_MODELS` while keeping `VRAM_LLAMA_FIT_MODEL` as a fallback.
 - 2026-04-23: Added requested full-model fixtures from QuantFactory (Qwen2.5-0.5B-Instruct Q4_0) and unsloth (gemma-3-1b-it Q2_K), then validated native fit execution + parity and browser wasm in-process fit across all three full-model fixtures.
 - 2026-04-23: Completed item 14 API-surface cleanup by simplifying predictor response shapes, updating schema/tests, and validating native+vendor+wasm behavior on full-model fixtures.
-- 2026-04-23: Merged `hf_range_plan` functionality into `hf_range_fetch_helper` and removed the redundant standalone range-plan module/files.
+- 2026-04-23: Consolidated duplicate HF prefix range-planning modules and removed the redundant standalone implementation.
 - 2026-04-23: Began replacing fit-mode planning-only API responses with in-process execution wiring so the exported predictor API can directly consume the override-capable llama/common path.
 - 2026-04-23: Added a browser-side wasm helper that mounts local model bytes into the Emscripten FS and issues `fit.execute_in_process` requests against the vendor-enabled predictor module.
 - 2026-04-23: Added post-fit model/context instantiation inside the in-process API executor so fit responses now include detailed device and host model/context/compute breakdowns in both vendor-native and vendor-wasm builds.
@@ -316,3 +316,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-24: Moved browser fit execution onto a dedicated worker path (`predictor_fit_worker`) so long fit runs no longer execute on the main UI thread.
 - 2026-04-24: Fixed fit margin derivation for `target_free_mib` by basing margins on desired free memory plus base headroom, preventing large simulated GPUs from being effectively treated as "must stay almost entirely free".
 - 2026-04-24: Updated `n_gpu_layers` input parsing in the Svelte parameter panel to reliably preserve `-1` and clamp invalid values.
+- 2026-04-24: Added Hugging Face repo search + GGUF file selection UI, integrated metadata validation/submission flow through the WASM worker predictor API, and surfaced metadata responses in the results panel.

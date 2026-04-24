@@ -2,15 +2,16 @@
 
 #include "vram/fit_executor.h"
 #include "vram/gguf_prefix_parser.h"
-#include "vram/hf_range_fetch_helper.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 #include <cstdio>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -20,6 +21,103 @@ using nlohmann::json;
 constexpr uint64_t k_default_initial_prefix_bytes = 1024 * 1024;
 constexpr uint64_t k_default_max_prefix_bytes = 8 * 1024 * 1024;
 constexpr size_t k_max_tensor_preview = 32;
+
+struct byte_range {
+    uint64_t start = 0;
+    uint64_t end = 0;
+};
+
+struct hf_range_request {
+    std::string url;
+    uint64_t start = 0;
+    uint64_t end = 0;
+    std::vector<std::pair<std::string, std::string>> headers;
+};
+
+std::string encode_url_component(const std::string & input, bool preserve_slash) {
+    static const char * k_hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(input.size() * 3);
+
+    for (const unsigned char c : input) {
+        const bool unreserved =
+            (c >= 'A' && c <= 'Z') ||
+            (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~' ||
+            (preserve_slash && c == '/');
+
+        if (unreserved) {
+            out.push_back(static_cast<char>(c));
+            continue;
+        }
+
+        out.push_back('%');
+        out.push_back(k_hex[(c >> 4) & 0x0F]);
+        out.push_back(k_hex[c & 0x0F]);
+    }
+
+    return out;
+}
+
+std::vector<byte_range> build_prefix_range_plan(
+    uint64_t initial_bytes,
+    uint64_t max_bytes,
+    double growth_factor) {
+    std::vector<byte_range> ranges;
+    if (max_bytes == 0) {
+        return ranges;
+    }
+
+    if (initial_bytes == 0 || initial_bytes > max_bytes) {
+        initial_bytes = max_bytes < 1024 * 1024 ? max_bytes : 1024 * 1024;
+    }
+
+    if (initial_bytes == 0) {
+        initial_bytes = 1;
+    }
+
+    if (growth_factor <= 1.0) {
+        growth_factor = 2.0;
+    }
+
+    uint64_t current = initial_bytes;
+    while (true) {
+        ranges.push_back({0, current - 1});
+        if (current >= max_bytes) {
+            break;
+        }
+
+        uint64_t next = static_cast<uint64_t>(std::ceil(static_cast<double>(current) * growth_factor));
+        if (next <= current) {
+            next = current + 1;
+        }
+        if (next > max_bytes) {
+            next = max_bytes;
+        }
+        current = next;
+    }
+
+    return ranges;
+}
+
+std::string resolve_hf_file_url(
+    const std::string & repo,
+    const std::string & file,
+    const std::string & revision) {
+    if (repo.empty() || file.empty()) {
+        return "";
+    }
+
+    const std::string effective_revision = revision.empty() ? "main" : revision;
+    std::string url = "https://huggingface.co/";
+    url += encode_url_component(repo, false);
+    url += "/resolve/";
+    url += encode_url_component(effective_revision, true);
+    url += "/";
+    url += encode_url_component(file, true);
+    return url;
+}
 
 bool get_file_size(const char * path, uint64_t & size_out) {
     FILE * fp = std::fopen(path, "rb");
@@ -168,6 +266,50 @@ json headers_to_json(const std::vector<std::pair<std::string, std::string>> & he
     return out;
 }
 
+std::vector<hf_range_request> build_hf_prefix_range_requests_for_url(
+    const std::string & url,
+    uint64_t initial_bytes,
+    uint64_t max_bytes,
+    double growth_factor,
+    const std::string & bearer_token,
+    bool include_authorization_header) {
+    std::vector<hf_range_request> requests;
+    if (url.empty()) {
+        return requests;
+    }
+
+    const std::vector<byte_range> plan = build_prefix_range_plan(initial_bytes, max_bytes, growth_factor);
+    requests.reserve(plan.size());
+
+    for (const byte_range & range : plan) {
+        hf_range_request req;
+        req.url = url;
+        req.start = range.start;
+        req.end = range.end;
+
+        char range_header[64];
+        const int n = std::snprintf(
+            range_header,
+            sizeof(range_header),
+            "bytes=%llu-%llu",
+            static_cast<unsigned long long>(range.start),
+            static_cast<unsigned long long>(range.end));
+        if (n <= 0) {
+            continue;
+        }
+
+        req.headers.push_back({"Range", range_header});
+        req.headers.push_back({"Accept", "application/octet-stream"});
+        if (include_authorization_header && !bearer_token.empty()) {
+            req.headers.push_back({"Authorization", "Bearer " + bearer_token});
+        }
+
+        requests.push_back(req);
+    }
+
+    return requests;
+}
+
 json fit_memory_entry_to_json(const vram::fit_memory_breakdown_entry & entry) {
     return {
         {"name", entry.name},
@@ -245,7 +387,7 @@ extern "C" const char * vram_predictor_get_system_info_json(void) {
             {
                 {"metadataEstimator", false},
                 {"llamaFitMode", vram::fit_execution_available()},
-                {"hfRangeFetch", true},
+                {"hfRangeFetch", false},
                 {"ggufPrefixParser", true},
                 {"fitMemoryOverrideExecution", vram::fit_execution_available()}
             }
@@ -586,13 +728,13 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             const std::string file = hf.contains("file") && hf["file"].is_string() ? hf["file"].get<std::string>() : "";
             const std::string revision = hf.contains("revision") && hf["revision"].is_string() ? hf["revision"].get<std::string>() : "";
             const std::string token = hf.contains("token") && hf["token"].is_string() ? hf["token"].get<std::string>() : "";
+            const std::string resolved_url_override = hf.contains("resolvedUrl") && hf["resolvedUrl"].is_string()
+                ? hf["resolvedUrl"].get<std::string>()
+                : "";
 
-            vram::hf_model_location loc;
-            loc.repo = repo;
-            loc.file = file;
-            loc.revision = revision;
-
-            const std::string url = vram::resolve_hf_file_url(loc);
+            const std::string url = resolved_url_override.empty()
+                ? resolve_hf_file_url(repo, file, revision)
+                : resolved_url_override;
             if (url.empty()) {
                 json error = {
                     {"ok", false},
@@ -608,7 +750,25 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             const double growth_factor = json_double_or_default(fetch, "growth_factor", 2.0);
             const bool execute_remote = json_bool_or_default(fetch, "execute_remote", false);
 
-            const auto requests = vram::build_hf_prefix_range_requests(loc, initial_bytes, max_bytes, growth_factor, token);
+            std::vector<hf_range_request> requests;
+            if (!resolved_url_override.empty()) {
+                const bool include_authorization_header = resolved_url_override.rfind("https://huggingface.co/", 0) == 0;
+                requests = build_hf_prefix_range_requests_for_url(
+                    resolved_url_override,
+                    initial_bytes,
+                    max_bytes,
+                    growth_factor,
+                    token,
+                    include_authorization_header);
+            } else {
+                requests = build_hf_prefix_range_requests_for_url(
+                    url,
+                    initial_bytes,
+                    max_bytes,
+                    growth_factor,
+                    token,
+                    true);
+            }
             json planned = json::array();
             for (const auto & req : requests) {
                 planned.push_back({
@@ -619,81 +779,25 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 });
             }
 
-            if (!execute_remote) {
-                json body = {
-                    {"ok", true},
+            if (execute_remote) {
+                json error = {
+                    {"ok", false},
                     {"source", "huggingface"},
+                    {"error", "remote_hf_fetch_removed_use_js_client"},
                     {"resolvedUrl", url},
                     {"requests", planned}
                 };
-                response = body.dump();
+                response = error.dump();
                 return response.c_str();
             }
 
-            uint64_t min_required = 0;
-            std::string last_error;
-
-            for (const auto & req : requests) {
-                std::vector<uint8_t> fetched;
-                std::string fetch_error;
-                const bool ok_fetch = vram::fetch_hf_range_bytes(req, fetched, fetch_error);
-
-                if (!ok_fetch) {
-                    json error = {
-                        {"ok", false},
-                        {"source", "huggingface"},
-                        {"error", "hf_range_fetch_failed"},
-                        {"detail", fetch_error},
-                        {"resolvedUrl", url}
-                    };
-                    response = error.dump();
-                    return response.c_str();
-                }
-
-                const auto parsed_prefix = vram::parse_gguf_prefix(fetched.data(), fetched.size(), k_max_tensor_preview);
-
-                if (parsed_prefix.status == vram::gguf_prefix_parse_status::complete) {
-                    json tensors = json::array();
-                    for (const auto & tensor : parsed_prefix.metadata.tensors) {
-                        tensors.push_back(tensor_to_json(tensor));
-                    }
-
-                    json body = {
-                        {"ok", true},
-                        {"source", "huggingface"},
-                        {"resolvedUrl", url},
-                        {"metadata",
-                            {
-                                {"version", parsed_prefix.metadata.version},
-                                {"kvCount", parsed_prefix.metadata.kv_count},
-                                {"tensorCount", parsed_prefix.metadata.tensor_count},
-                                {"bytesConsumed", parsed_prefix.metadata.bytes_consumed},
-                                {"tensorListTruncated", parsed_prefix.metadata.tensor_list_truncated},
-                                {"tensors", tensors},
-                            }
-                        }
-                    };
-                    response = body.dump();
-                    return response.c_str();
-                }
-
-                if (parsed_prefix.status == vram::gguf_prefix_parse_status::need_more_data) {
-                    min_required = std::max(min_required, parsed_prefix.minimum_required_bytes);
-                    continue;
-                }
-
-                last_error = parsed_prefix.error.empty() ? "invalid_gguf_format" : parsed_prefix.error;
-                break;
-            }
-
-            json error = {
-                {"ok", false},
+            json body = {
+                {"ok", true},
                 {"source", "huggingface"},
-                {"error", last_error.empty() ? "insufficient_prefix_bytes" : last_error},
-                {"minimumRequiredBytes", min_required},
-                {"resolvedUrl", url}
+                {"resolvedUrl", url},
+                {"requests", planned}
             };
-            response = error.dump();
+            response = body.dump();
             return response.c_str();
         }
 
@@ -742,7 +846,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         return response.c_str();
     }
 
-    const std::vector<vram::byte_range> plan = vram::build_hf_prefix_range_plan(initial_bytes, max_bytes, growth_factor);
+    const std::vector<byte_range> plan = build_prefix_range_plan(initial_bytes, max_bytes, growth_factor);
     if (plan.empty()) {
         json error = {
             {"ok", false},
@@ -755,7 +859,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     uint64_t min_required = 0;
     std::string last_error;
 
-    for (const vram::byte_range & range : plan) {
+    for (const byte_range & range : plan) {
         const uint64_t capped_end = std::min(range.end, file_size - 1);
         const uint64_t requested_bytes_u64 = capped_end + 1;
         const size_t requested_bytes = static_cast<size_t>(requested_bytes_u64);

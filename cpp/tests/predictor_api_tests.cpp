@@ -119,6 +119,36 @@ void test_hf_request_planning() {
     assert(contains(body, "\"end\":1023"));
 }
 
+void test_hf_request_planning_with_resolved_url_override() {
+    const std::string request =
+        "{"
+        "\"mode\":\"metadata\","
+        "\"model\":{"
+            "\"source\":\"huggingface\","
+            "\"huggingFace\":{"
+                "\"repo\":\"unsloth/gemma-4-E4B-it-GGUF\","
+                "\"file\":\"gemma-4-E4B-it-Q4_1.gguf\","
+                "\"revision\":\"main\","
+                "\"resolvedUrl\":\"https://cas-bridge.example.com/models/gemma-4-E4B-it-Q4_1.gguf\","
+                "\"token\":\"hf_test_token\""
+            "}"
+        "},"
+        "\"runtime\":{\"n_ctx\":1024,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{\"host_ram_bytes\":34359738368},"
+        "\"fetch\":{\"initial_bytes\":1024,\"max_bytes\":4096,\"growth_factor\":2.0}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":true"));
+    assert(contains(body, "\"source\":\"huggingface\""));
+    assert(contains(body, "\"resolvedUrl\":\"https://cas-bridge.example.com/models/gemma-4-E4B-it-Q4_1.gguf\""));
+    assert(contains(body, "\"requests\""));
+    assert(contains(body, "\"url\":\"https://cas-bridge.example.com/models/gemma-4-E4B-it-Q4_1.gguf\""));
+    assert(!contains(body, "\"name\":\"Authorization\""));
+}
+
 void test_hf_split_gguf_request_planning() {
     const std::string request =
         "{"
@@ -143,6 +173,32 @@ void test_hf_split_gguf_request_planning() {
     assert(contains(body, "\"source\":\"huggingface\""));
     assert(contains(body, "Llama-3.2-1B-Instruct-Q4_K_M-00001-of-00002.gguf"));
     assert(contains(body, "\"resolvedUrl\":\"https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M-00001-of-00002.gguf\""));
+    assert(contains(body, "\"requests\""));
+}
+
+void test_hf_execute_remote_is_rejected() {
+    const std::string request =
+        "{"
+        "\"mode\":\"metadata\","
+        "\"model\":{"
+            "\"source\":\"huggingface\","
+            "\"huggingFace\":{"
+                "\"repo\":\"Qwen/Qwen2.5-0.5B-Instruct-GGUF\","
+                "\"file\":\"qwen2.5-0.5b-instruct-q4_k_m.gguf\","
+                "\"revision\":\"main\""
+            "}"
+        "},"
+        "\"runtime\":{\"n_ctx\":1024,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{\"host_ram_bytes\":34359738368},"
+        "\"fetch\":{\"initial_bytes\":1024,\"max_bytes\":4096,\"growth_factor\":2.0,\"execute_remote\":true}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":false"));
+    assert(contains(body, "\"source\":\"huggingface\""));
+    assert(contains(body, "\"error\":\"remote_hf_fetch_removed_use_js_client\""));
     assert(contains(body, "\"requests\""));
 }
 
@@ -270,7 +326,9 @@ int main() {
     test_local_fixture_parse();
     test_metadata_only_fixture_matrix();
     test_hf_request_planning();
+    test_hf_request_planning_with_resolved_url_override();
     test_hf_split_gguf_request_planning();
+    test_hf_execute_remote_is_rejected();
     test_fit_mode_command_planning();
     test_fit_mode_heterogeneous_gpu_planning();
     test_fit_mode_backend_profile_parsing();

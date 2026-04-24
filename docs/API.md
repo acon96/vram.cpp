@@ -16,7 +16,9 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
     "huggingFace": {
       "repo": "<string>",
       "file": "<string>",
-      "revision": "<string>"
+      "revision": "<string>",
+      "resolvedUrl": "<string>",
+      "token": "<string>"
     }
   },
   "runtime": {
@@ -59,6 +61,7 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
 | `model.source` | yes | `"local"` or `"huggingface"` |
 | `model.path` | no | Local or virtual WASM FS path (used when `source = "local"`) |
 | `model.huggingFace` | no | HF repo details (used when `source = "huggingface"`) |
+| `model.huggingFace.resolvedUrl` | no | Optional direct URL override for metadata range requests (for example a client-resolved redirect target) |
 | `runtime.n_ctx` | yes | Context window size in tokens |
 | `runtime.cache_type_k` | yes | KV cache key dtype (e.g. `"f16"`, `"q8_0"`) |
 | `runtime.cache_type_v` | yes | KV cache value dtype |

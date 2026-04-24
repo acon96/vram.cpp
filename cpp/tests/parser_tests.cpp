@@ -1,5 +1,4 @@
 #include "vram/gguf_prefix_parser.h"
-#include "vram/hf_range_fetch_helper.h"
 
 #include <cassert>
 #include <cstdio>
@@ -84,22 +83,6 @@ void test_parse_invalid_magic() {
     assert(result.status == vram::gguf_prefix_parse_status::invalid_format);
 }
 
-void test_range_plan_growth() {
-    const auto ranges = vram::build_hf_prefix_range_plan(1024, 8192, 2.0);
-    assert(ranges.size() == 4);
-    assert(ranges[0].start == 0 && ranges[0].end == 1023);
-    assert(ranges[1].start == 0 && ranges[1].end == 2047);
-    assert(ranges[2].start == 0 && ranges[2].end == 4095);
-    assert(ranges[3].start == 0 && ranges[3].end == 8191);
-}
-
-void test_range_plan_clamp() {
-    const auto ranges = vram::build_hf_prefix_range_plan(0, 128, 1.5);
-    assert(!ranges.empty());
-    assert(ranges.front().start == 0);
-    assert(ranges.back().end == 127);
-}
-
 bool read_file_bytes(const char * path, std::vector<uint8_t> & out) {
     FILE * fp = std::fopen(path, "rb");
     if (fp == nullptr) {
@@ -181,8 +164,6 @@ int main() {
     test_parse_complete_prefix();
     test_parse_need_more_data();
     test_parse_invalid_magic();
-    test_range_plan_growth();
-    test_range_plan_clamp();
     test_real_gguf_golden_fixtures();
     return 0;
 }

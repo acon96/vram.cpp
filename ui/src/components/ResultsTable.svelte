@@ -10,6 +10,9 @@
     const memBytes = $derived(fit?.memoryBytes);
     const warnings = $derived(fit?.warnings ?? []);
     const fitStatus = $derived(fit?.status);
+    const metadata = $derived(result?.metadata ?? null);
+    const metadataTensors = $derived(Array.isArray(metadata?.tensors) ? metadata.tensors : []);
+    const metadataTensorPreview = $derived(metadataTensors.slice(0, 8));
 
     function fitStatusMessage(code) {
         if (code === 0) return 'fit_success';
@@ -42,6 +45,15 @@
 
     function totalUsed(row) {
         return (row.modelMiB ?? 0) + (row.contextMiB ?? 0) + (row.computeMiB ?? 0);
+    }
+
+    function formatBytes(bytes) {
+        const n = Number(bytes);
+        if (!Number.isFinite(n) || n <= 0) return '0 B';
+        if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+        if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(2)} MiB`;
+        if (n >= 1024) return `${(n / 1024).toFixed(1)} KiB`;
+        return `${Math.round(n)} B`;
     }
 </script>
 
@@ -91,6 +103,64 @@
             {/if}
             {#if result.detail}
                 <p class="detail">{result.detail}</p>
+            {/if}
+        </div>
+
+    <!-- Metadata response -->
+    {:else if metadata}
+        <div class="metadata-state">
+            <div class="metadata-grid">
+                <div class="meta-chip">
+                    <span class="meta-label">Source</span>
+                    <strong>{result?.source ?? 'unknown'}</strong>
+                </div>
+                <div class="meta-chip">
+                    <span class="meta-label">GGUF version</span>
+                    <strong>{metadata.version ?? 'n/a'}</strong>
+                </div>
+                <div class="meta-chip">
+                    <span class="meta-label">KV entries</span>
+                    <strong>{metadata.kvCount ?? 'n/a'}</strong>
+                </div>
+                <div class="meta-chip">
+                    <span class="meta-label">Tensor count</span>
+                    <strong>{metadata.tensorCount ?? 'n/a'}</strong>
+                </div>
+                <div class="meta-chip">
+                    <span class="meta-label">Bytes consumed</span>
+                    <strong>{formatBytes(metadata.bytesConsumed ?? 0)}</strong>
+                </div>
+            </div>
+
+            {#if result?.resolvedUrl}
+                <p class="metadata-url">{result.resolvedUrl}</p>
+            {/if}
+
+            {#if metadataTensorPreview.length > 0}
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tensor</th>
+                                <th>Dimensions</th>
+                                <th>GGML Type</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {#each metadataTensorPreview as tensor}
+                                <tr>
+                                    <td class="tensor-name">{tensor.name ?? 'unknown'}</td>
+                                    <td class="num">{Array.isArray(tensor.dimensions) ? tensor.dimensions.join(' × ') : 'n/a'}</td>
+                                    <td class="num">{tensor.ggmlType ?? 'n/a'}</td>
+                                </tr>
+                            {/each}
+                        </tbody>
+                    </table>
+                </div>
+            {/if}
+
+            {#if (metadata.tensorCount ?? 0) > metadataTensorPreview.length}
+                <p class="detail">Showing {metadataTensorPreview.length} tensor preview rows out of {metadata.tensorCount}.</p>
             {/if}
         </div>
 
@@ -326,9 +396,70 @@
         color: var(--error);
     }
 
+    .metadata-state {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .metadata-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .meta-chip {
+        border: 1px solid var(--border);
+        background: var(--surface-raised);
+        border-radius: 10px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .meta-label {
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+    }
+
+    .meta-chip strong {
+        font-family: var(--mono);
+        color: var(--text-primary);
+        font-size: 0.9rem;
+        overflow-wrap: anywhere;
+    }
+
+    .metadata-url {
+        margin: 0;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        overflow-wrap: anywhere;
+    }
+
+    .tensor-name {
+        max-width: 0;
+        overflow-wrap: anywhere;
+        font-size: 0.82rem;
+    }
+
     .detail {
         font-size: 0.8rem;
         margin-top: 8px;
         opacity: 0.8;
+    }
+
+    @media (max-width: 860px) {
+        .metadata-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 620px) {
+        .metadata-grid {
+            grid-template-columns: 1fr;
+        }
     }
 </style>

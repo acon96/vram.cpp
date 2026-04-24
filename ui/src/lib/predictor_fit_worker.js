@@ -23,6 +23,78 @@ function sanitizePathSegment(name) {
     return String(name || 'model.gguf').replace(/[^A-Za-z0-9._-]/g, '_');
 }
 
+function parseLogicalSizeBytes(rawValue) {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+        return 0;
+    }
+
+    const truncated = Math.trunc(parsed);
+    if (truncated <= 0) {
+        return 0;
+    }
+
+    return truncated;
+}
+
+function installSparseLogicalSize(module, virtualPath, logicalSizeBytes, downloadedBytes) {
+    if (!module?.FS || typeof module.FS.lookupPath !== 'function') {
+        return false;
+    }
+
+    if (!Number.isFinite(logicalSizeBytes) || !Number.isFinite(downloadedBytes)) {
+        return false;
+    }
+
+    const logicalSize = Math.trunc(logicalSizeBytes);
+    const prefixSize = Math.trunc(downloadedBytes);
+
+    if (logicalSize <= prefixSize || prefixSize <= 0) {
+        return false;
+    }
+
+    const lookup = module.FS.lookupPath(virtualPath, { follow: true });
+    const node = lookup?.node;
+    if (!node || !node.stream_ops || typeof node.stream_ops.read !== 'function') {
+        return false;
+    }
+
+    const baseRead = node.stream_ops.read;
+    node.stream_ops.read = (stream, buffer, offset, length, position) => {
+        const currentNode = stream.node;
+        if (position >= currentNode.usedBytes) {
+            return 0;
+        }
+
+        const size = Math.min(currentNode.usedBytes - position, length);
+        const availablePrefix = position < prefixSize
+            ? Math.min(size, prefixSize - position)
+            : 0;
+
+        if (availablePrefix > 0) {
+            const source = currentNode.contents.subarray(position, position + availablePrefix);
+            buffer.set(source, offset);
+        }
+
+        if (availablePrefix < size) {
+            buffer.fill(0, offset + availablePrefix, offset + size);
+        }
+
+        return size;
+    };
+
+    node.usedBytes = logicalSize;
+    node.mtime = node.ctime = Date.now();
+
+    debugLog('installSparseLogicalSize.applied', {
+        virtualPath,
+        logicalSize,
+        prefixSize,
+    });
+
+    return true;
+}
+
 function ensureDirectory(fs, dirPath) {
     const segments = dirPath.split('/').filter(Boolean);
     let current = '';
@@ -187,8 +259,13 @@ async function handlePredict(message) {
 
     const safeName = sanitizePathSegment(message.fileName);
     const virtualPath = `${mountRoot}/${message.jobId}_${safeName}`;
+    const fileBytes = new Uint8Array(message.fileBuffer);
+    const logicalSizeBytes = parseLogicalSizeBytes(message?.options?.virtualFileSizeBytes);
 
-    module.FS.writeFile(virtualPath, new Uint8Array(message.fileBuffer));
+    module.FS.writeFile(virtualPath, fileBytes);
+    if (logicalSizeBytes > fileBytes.byteLength) {
+        installSparseLogicalSize(module, virtualPath, logicalSizeBytes, fileBytes.byteLength);
+    }
 
     try {
         const request = buildPredictRequest(message.options, virtualPath);
