@@ -57,6 +57,7 @@ endif()
 add_library(vram_predictor_core STATIC
     cpp/src/predictor_api.cpp
     cpp/src/fit_executor.cpp
+    cpp/src/sim_backend.cpp
     cpp/src/gguf_prefix_parser.cpp
     cpp/src/hf_range_fetch_helper.cpp
 )
@@ -85,6 +86,7 @@ if(VRAM_ENABLE_VENDOR_LLAMA)
             ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/include
             ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/src
             ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/src
     )
 
     target_link_libraries(vram_predictor_core

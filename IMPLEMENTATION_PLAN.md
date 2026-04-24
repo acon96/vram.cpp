@@ -263,6 +263,9 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Wired `VITE_WASM_BASE_URL` to accept full asset URLs (cross-port local dev) or relative paths (static hosting), and added a dedicated local assets server script that serves wasm/helper files in place without copy steps.
 16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 17. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
+  - [x] Added a new simulated backend module (`cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`) that exposes profile-aware fake ggml GPU devices (CUDA/Metal/Vulkan/Generic) with configurable free/total memory and null-terminated `ggml_backend_dev_t *` wiring for `llama_model_params.devices`.
+  - [ ] Route in-process fit execution through `sim_backend` + stock `common_fit_params(...)` to remove the patched `common_fit_params_with_memory_override(...)` dependency.
+  - [ ] Thread optional per-device backend profile selection through API request parsing and browser helper convenience APIs.
 
 ## 10. Change Log
 
@@ -293,3 +296,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Added explicit `fit.execute_in_process` API execution, validated it in a vendor-enabled native test path, and produced a successful vendor-enabled Emscripten build after aligning the predictor target with llama.cpp's wasm64 configuration.
 - 2026-04-24: Scaffolded Svelte 5 + Vite UI in `ui/` with FileUpload, ParamPanel, and ResultsTable components wired to the WASM predictor bridge; verified clean production build.
 - 2026-04-24: Switched UI wasm asset wiring to a URL-driven model (`VITE_WASM_BASE_URL`) with a dedicated CORS-enabled local assets server so Vite dev can run against in-place build artifacts on a separate port.
+- 2026-04-24: Added `sim_backend` scaffolding and CMake wiring so the project can construct simulated profile-based ggml GPU devices and pass them via `llama_model_params.devices` in vendor-enabled builds.
