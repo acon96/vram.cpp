@@ -215,6 +215,54 @@ void test_fit_mode_heterogeneous_gpu_planning() {
     assert(contains(body, "\"overrides\":{\"deviceFreeMiB\":[8192,5120,20480],\"deviceTotalMiB\":[16384,12288,24576],\"hostFreeMiB\":65536}"));
 }
 
+void test_fit_mode_backend_profile_parsing() {
+    const std::string request =
+        "{"
+        "\"mode\":\"fit\","
+        "\"model\":{\"source\":\"local\",\"path\":\"/tmp/sample.gguf\"},"
+        "\"runtime\":{\"n_ctx\":4096,\"n_gpu_layers\":-1,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{"
+            "\"host_ram_bytes\":34359738368,"
+            "\"fit_target_mib\":[512],"
+            "\"gpus\":["
+                "{\"id\":\"gpu0\",\"backend\":\"metal\",\"free_bytes\":8589934592,\"total_bytes\":12884901888}"
+            "]"
+        "},"
+        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\"}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":true"));
+    assert(contains(body, "\"executedInProcess\":false"));
+    assert(contains(body, "\"targets\":{\"fitMiB\":[512],\"targetFreeMiB\":[]}"));
+    assert(contains(body, "\"overrides\":{\"deviceFreeMiB\":[8192],\"deviceTotalMiB\":[12288],\"hostFreeMiB\":32768}"));
+}
+
+void test_fit_mode_invalid_backend_profile() {
+    const std::string request =
+        "{"
+        "\"mode\":\"fit\","
+        "\"model\":{\"source\":\"local\",\"path\":\"/tmp/sample.gguf\"},"
+        "\"runtime\":{\"n_ctx\":4096,\"n_gpu_layers\":-1,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{"
+            "\"host_ram_bytes\":34359738368,"
+            "\"fit_target_mib\":[512],"
+            "\"gpus\":["
+                "{\"id\":\"gpu0\",\"backend\":\"not-a-backend\",\"free_bytes\":8589934592,\"total_bytes\":12884901888}"
+            "]"
+        "},"
+        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\"}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":false"));
+    assert(contains(body, "\"error\":\"device.gpus[].backend_invalid\""));
+}
+
 } // namespace
 
 int main() {
@@ -225,5 +273,7 @@ int main() {
     test_hf_split_gguf_request_planning();
     test_fit_mode_command_planning();
     test_fit_mode_heterogeneous_gpu_planning();
+    test_fit_mode_backend_profile_parsing();
+    test_fit_mode_invalid_backend_profile();
     return 0;
 }

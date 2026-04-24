@@ -35,6 +35,7 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
       {
         "id": "<string>",
         "name": "<string>",
+        "backend": "cuda" | "metal" | "vulkan" | "generic",
         "index": <integer ≥ 0>,
         "free_bytes": <integer ≥ 0>,
         "total_bytes": <integer ≥ 0>
@@ -65,6 +66,7 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
 | `device.fit_target_mib` | no | Per-device llama-fit margin targets in MiB (maps to `--fit-target`) |
 | `device.target_free_mib` | no | Per-device desired free memory in MiB after fit adjustments |
 | `device.gpus` | no | GPU device list; omit for CPU-only mode |
+| `device.gpus[].backend` | no | Simulated backend profile used for op support matching (`cuda` default) |
 | `fit` | no | Options for the fit execution pass |
 
 ---

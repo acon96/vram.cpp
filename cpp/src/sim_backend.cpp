@@ -81,6 +81,12 @@ struct sim_backend_stream_context {
 struct sim_device_context {
     sim_device_spec spec;
     ggml_backend_buffer_type buft = {};
+    uint64_t allocated_bytes = 0;
+};
+
+struct sim_buffer_context {
+    sim_device_context * device = nullptr;
+    void * data = nullptr;
 };
 
 void * sim_aligned_alloc(size_t size, size_t alignment) {
@@ -192,11 +198,26 @@ void sim_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     if (buffer == nullptr) {
         return;
     }
-    sim_aligned_free(buffer->context);
+
+    auto * ctx = static_cast<sim_buffer_context *>(buffer->context);
+    if (ctx != nullptr) {
+        if (ctx->device != nullptr && ctx->device->allocated_bytes >= buffer->size) {
+            ctx->device->allocated_bytes -= static_cast<uint64_t>(buffer->size);
+        } else if (ctx->device != nullptr) {
+            ctx->device->allocated_bytes = 0;
+        }
+
+        if (ctx->data != nullptr) {
+            sim_aligned_free(ctx->data);
+        }
+
+        delete ctx;
+    }
 }
 
 void * sim_buffer_get_base(ggml_backend_buffer_t buffer) {
-    return buffer->context;
+    auto * ctx = static_cast<sim_buffer_context *>(buffer->context);
+    return ctx != nullptr ? ctx->data : nullptr;
 }
 
 void sim_buffer_memset_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
@@ -230,7 +251,13 @@ void sim_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
     if (buffer == nullptr || buffer->context == nullptr) {
         return;
     }
-    std::memset(buffer->context, value, buffer->size);
+
+    auto * ctx = static_cast<sim_buffer_context *>(buffer->context);
+    if (ctx == nullptr || ctx->data == nullptr) {
+        return;
+    }
+
+    std::memset(ctx->data, value, buffer->size);
 }
 
 const struct ggml_backend_buffer_i sim_buffer_i = {
@@ -248,11 +275,27 @@ const struct ggml_backend_buffer_i sim_buffer_i = {
 };
 
 ggml_backend_buffer_t sim_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+    auto * device_ctx = static_cast<sim_device_context *>(buft->context);
+
     void * data = sim_aligned_alloc(size, k_tensor_alignment);
     if (data == nullptr) {
         return nullptr;
     }
-    return ggml_backend_buffer_init(buft, sim_buffer_i, data, size);
+
+    auto * buffer_ctx = new sim_buffer_context;
+    if (buffer_ctx == nullptr) {
+        sim_aligned_free(data);
+        return nullptr;
+    }
+
+    buffer_ctx->device = device_ctx;
+    buffer_ctx->data = data;
+
+    if (device_ctx != nullptr) {
+        device_ctx->allocated_bytes += static_cast<uint64_t>(size);
+    }
+
+    return ggml_backend_buffer_init(buft, sim_buffer_i, buffer_ctx, size);
 }
 
 size_t sim_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
@@ -286,8 +329,11 @@ const char * sim_device_get_description(ggml_backend_dev_t dev) {
 
 void sim_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
     const auto * ctx = static_cast<const sim_device_context *>(dev->context);
+    const uint64_t allocated = std::min<uint64_t>(ctx->allocated_bytes, ctx->spec.free_bytes);
+    const uint64_t adjusted_free = ctx->spec.free_bytes - allocated;
+
     if (free != nullptr) {
-        *free = static_cast<size_t>(ctx->spec.free_bytes);
+        *free = static_cast<size_t>(adjusted_free);
     }
     if (total != nullptr) {
         *total = static_cast<size_t>(ctx->spec.total_bytes);
@@ -302,10 +348,12 @@ enum ggml_backend_dev_type sim_device_get_type(ggml_backend_dev_t dev) {
 void sim_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
     const auto * ctx = static_cast<const sim_device_context *>(dev->context);
     const bool metal_profile = ctx->spec.profile == sim_backend_profile::metal;
+    const uint64_t allocated = std::min<uint64_t>(ctx->allocated_bytes, ctx->spec.free_bytes);
+    const uint64_t adjusted_free = ctx->spec.free_bytes - allocated;
 
     props->name = ctx->spec.name.c_str();
     props->description = ctx->spec.description.c_str();
-    props->memory_free = static_cast<size_t>(ctx->spec.free_bytes);
+    props->memory_free = static_cast<size_t>(adjusted_free);
     props->memory_total = static_cast<size_t>(ctx->spec.total_bytes);
     props->type = GGML_BACKEND_DEVICE_TYPE_GPU;
     props->device_id = nullptr;

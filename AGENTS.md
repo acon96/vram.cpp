@@ -20,6 +20,7 @@ Use links instead of duplicating details:
 - Prefix parser: `cpp/src/gguf_prefix_parser.cpp`, `cpp/include/vram/gguf_prefix_parser.h`
 - Hugging Face range planning/fetch: `cpp/src/hf_range_fetch_helper.cpp`, `cpp/include/vram/hf_range_fetch_helper.h`
 - In-process fit executor: `cpp/src/fit_executor.cpp`, `cpp/include/vram/fit_executor.h`
+- Simulated ggml backend: `cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`
 - WASM entrypoint: `cpp/src/predictor_wasm_main.cpp`
 - Native fit harness tool: `cpp/tools/vram_fit_harness.cpp`
 - Integration tests: `cpp/tests/`

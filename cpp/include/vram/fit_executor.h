@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "vram/sim_backend.h"
+
 namespace vram {
 
 struct fit_memory_breakdown_entry {
@@ -27,9 +29,7 @@ struct fit_execution_request {
     std::string model_path;
     std::vector<uint64_t> fit_target_mib;
     std::vector<uint64_t> target_free_mib;
-    std::vector<uint64_t> override_device_free_mib;
-    std::vector<uint64_t> override_device_total_mib;
-    std::vector<std::string> override_device_labels;
+    std::vector<sim_device_spec> simulated_devices;
     bool has_override_host_free_mib = false;
     bool has_override_host_total_mib = false;
     uint64_t override_host_free_mib = 0;

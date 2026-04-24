@@ -264,8 +264,11 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 17. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
   - [x] Added a new simulated backend module (`cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`) that exposes profile-aware fake ggml GPU devices (CUDA/Metal/Vulkan/Generic) with configurable free/total memory and null-terminated `ggml_backend_dev_t *` wiring for `llama_model_params.devices`.
-  - [ ] Route in-process fit execution through `sim_backend` + stock `common_fit_params(...)` to remove the patched `common_fit_params_with_memory_override(...)` dependency.
-  - [ ] Thread optional per-device backend profile selection through API request parsing and browser helper convenience APIs.
+  - [x] Routed in-process fit execution through `sim_backend` + stock `common_fit_params(...)` so predictor API fit execution no longer calls patched `common_fit_params_with_memory_override(...)`.
+  - [x] Threaded optional per-device backend profile selection through API request parsing (`device.gpus[].backend`) and validated it in predictor API tests.
+  - [x] Stabilized wasm in-process fit breakdown collection by using no-allocation model/context setup and falling back to non-fatal summary rows when detailed breakdown collection fails.
+  - [x] Refined simulated device memory accounting so `ggml_backend_dev_memory` reports post-allocation free bytes (reducing negative/unbounded unaccounted memory artifacts in debug tables).
+  - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel.
 
 ## 10. Change Log
 
@@ -297,3 +300,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-24: Scaffolded Svelte 5 + Vite UI in `ui/` with FileUpload, ParamPanel, and ResultsTable components wired to the WASM predictor bridge; verified clean production build.
 - 2026-04-24: Switched UI wasm asset wiring to a URL-driven model (`VITE_WASM_BASE_URL`) with a dedicated CORS-enabled local assets server so Vite dev can run against in-place build artifacts on a separate port.
 - 2026-04-24: Added `sim_backend` scaffolding and CMake wiring so the project can construct simulated profile-based ggml GPU devices and pass them via `llama_model_params.devices` in vendor-enabled builds.
+- 2026-04-24: Migrated in-process fit execution to stock `common_fit_params(...)` + simulated backend devices and removed in-process dependency on patched memory-override fit symbols.
+- 2026-04-24: Added backend-profile request parsing (`device.gpus[].backend`), updated API docs/AGENTS references, and expanded predictor API tests for valid/invalid backend profile handling.
+- 2026-04-24: Fixed wasm fit post-pass breakdown failures by switching breakdown collection to no-allocation model/context setup and adding graceful fallback warnings instead of hard API failure when breakdown collection cannot initialize.
+- 2026-04-24: Updated simulated backend memory reporting to subtract live simulated allocations from free bytes, preventing large unsigned underflow artifacts in debug unaccounted-memory output.

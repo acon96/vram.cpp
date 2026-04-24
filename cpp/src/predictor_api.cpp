@@ -339,7 +339,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
         std::vector<uint64_t> override_device_free_mib;
         std::vector<uint64_t> override_device_total_mib;
-        std::vector<std::string> override_device_labels;
+        std::vector<vram::sim_device_spec> simulated_devices;
         if (device.contains("gpus")) {
             if (!device["gpus"].is_array()) {
                 json error = {
@@ -363,6 +363,29 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 const uint64_t free_bytes = gpu["free_bytes"].get<uint64_t>();
                 override_device_free_mib.push_back(free_bytes / (1024 * 1024));
 
+                vram::sim_backend_profile backend_profile = vram::sim_backend_profile::cuda;
+                if (gpu.contains("backend")) {
+                    if (!gpu["backend"].is_string()) {
+                        json error = {
+                            {"ok", false},
+                            {"error", "device.gpus[].backend_must_be_string_when_present"}
+                        };
+                        response = error.dump();
+                        return response.c_str();
+                    }
+
+                    const std::string backend_name = gpu["backend"].get<std::string>();
+                    if (!vram::parse_sim_backend_profile(backend_name, backend_profile)) {
+                        json error = {
+                            {"ok", false},
+                            {"error", "device.gpus[].backend_invalid"},
+                            {"value", backend_name}
+                        };
+                        response = error.dump();
+                        return response.c_str();
+                    }
+                }
+
                 std::string label;
                 if (gpu.contains("name") && gpu["name"].is_string()) {
                     label = gpu["name"].get<std::string>();
@@ -371,7 +394,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                     label = gpu["id"].get<std::string>();
                 }
                 if (label.empty()) {
-                    label = "GPU " + std::to_string(override_device_labels.size());
+                    label = "GPU " + std::to_string(simulated_devices.size());
                 }
                 if (gpu.contains("index") && gpu["index"].is_number_integer()) {
                     const int64_t gpu_index = gpu["index"].get<int64_t>();
@@ -379,12 +402,21 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                         label += " [index " + std::to_string(gpu_index) + "]";
                     }
                 }
-                override_device_labels.push_back(label);
+
+                uint64_t total_bytes = free_bytes;
 
                 if (gpu.contains("total_bytes") && gpu["total_bytes"].is_number_integer()) {
-                    const uint64_t total_bytes = gpu["total_bytes"].get<uint64_t>();
+                    total_bytes = gpu["total_bytes"].get<uint64_t>();
                     override_device_total_mib.push_back(total_bytes / (1024 * 1024));
                 }
+
+                vram::sim_device_spec sim_device;
+                sim_device.name = label;
+                sim_device.description = std::string("Simulated ") + vram::sim_backend_profile_name(backend_profile) + " device";
+                sim_device.free_bytes = free_bytes;
+                sim_device.total_bytes = std::max(total_bytes, free_bytes);
+                sim_device.profile = backend_profile;
+                simulated_devices.push_back(sim_device);
             }
         }
 
@@ -468,9 +500,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             exec_request.model_path = model_path;
             exec_request.fit_target_mib = fit_target_mib;
             exec_request.target_free_mib = target_free_mib;
-            exec_request.override_device_free_mib = override_device_free_mib;
-            exec_request.override_device_total_mib = override_device_total_mib;
-            exec_request.override_device_labels = override_device_labels;
+            exec_request.simulated_devices = simulated_devices;
             exec_request.has_override_host_free_mib = override_host_free_mib > 0;
             exec_request.has_override_host_total_mib = override_host_free_mib > 0;
             exec_request.override_host_free_mib = override_host_free_mib;
