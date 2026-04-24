@@ -98,9 +98,11 @@ build-fit-harness/vram_fit_harness \
 	-c 4096
 ```
 
-The native harness currently uses a vendor patch in `vendor/llama-cpp/common/fit.h` and `vendor/llama-cpp/common/fit.cpp` via `common_fit_params_with_memory_override(...)`, with the corresponding rebaseable patch stored at `patches/llama-fit-memory-override.patch`.
+The native harness and in-process predictor API now both use stock `common_fit_params(...)` with an explicit simulated backend device list (`llama_model_params.devices`) via `execute_fit_request(...)`, so fit execution no longer depends on the old memory-override patch surface.
 
-The in-process predictor API now uses stock `common_fit_params(...)` with an explicit simulated backend device list (`llama_model_params.devices`) so fit execution no longer depends on the memory-override patch surface.
+The Emscripten-specific synchronous fit logging patch is still intentionally retained. With debug fit logs enabled, the default `llama/common` logger path can try to spawn a worker thread that is unavailable in the browser build.
+
+For browser-side debugging, the Svelte app exposes a raw JSON harness at `/?view=harness`. Upload a local GGUF, paste a request body, and the page submits it through the same WASM worker used by the main UI.
 
 Predictor API fit execution example:
 

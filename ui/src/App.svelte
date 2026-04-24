@@ -1,5 +1,6 @@
 <script>
     import FileUpload from './components/FileUpload.svelte';
+    import JsonHarness from './components/JsonHarness.svelte';
     import ParamPanel from './components/ParamPanel.svelte';
     import ResultsTable from './components/ResultsTable.svelte';
     import { initPredictorWorker } from './lib/predictor_worker_client.js';
@@ -13,6 +14,8 @@
     const wasmJsUrl = new URL('vram_predictor_wasm.js', wasmBaseUrl).toString();
     const wasmDebugEnabled = import.meta.env.VITE_DEBUG_WASM === '1' || import.meta.env.DEV;
     const wasmFitLogsEnabled = import.meta.env.VITE_DEBUG_WASM_FIT_LOGS === '1';
+    const appView = new URLSearchParams(window.location.search).get('view') ?? 'app';
+    const isJsonHarnessView = appView === 'harness';
     globalThis.__VRAM_DEBUG__ = wasmDebugEnabled;
 
     function debugLog(event, payload) {
@@ -241,6 +244,9 @@
     </header>
 
     <main class="app-main">
+        {#if isJsonHarnessView}
+            <JsonHarness wasmJsUrl={wasmJsUrl} debugEnabled={wasmDebugEnabled} />
+        {:else}
         <!-- Top row: Model input + Results side-by-side -->
         <div class="top-row">
             <div class="model-col">
@@ -295,6 +301,7 @@
                 {/if}
             </section>
         </section>
+        {/if}
     </main>
 
     <footer class="app-footer">

@@ -27,31 +27,11 @@ if(VRAM_ENABLE_VENDOR_LLAMA AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama
     add_subdirectory(vendor/llama-cpp EXCLUDE_FROM_ALL)
 
     if(EMSCRIPTEN AND TARGET llama-common)
-        # Force fit logging in wasm builds to use a synchronous path so no
-        # common logger worker thread is constructed under Emscripten.
+        # Keep llama/common fit logging on a synchronous path in wasm builds.
+        # The default logger path can try to spawn a worker thread, which is not
+        # available in the non-pthreads browser build used here.
         target_compile_definitions(llama-common PRIVATE VRAM_EMSCRIPTEN_SYNC_FIT_LOGS=1)
     endif()
-endif()
-
-if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS AND NOT EMSCRIPTEN)
-    add_executable(vram_fit_harness
-        cpp/tools/vram_fit_harness.cpp
-    )
-
-    target_include_directories(vram_fit_harness
-        PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/common
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/include
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/src
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/include
-    )
-
-    target_link_libraries(vram_fit_harness
-        PRIVATE
-            llama-common
-            llama
-            Threads::Threads
-    )
 endif()
 
 add_library(vram_predictor_core STATIC
@@ -94,6 +74,17 @@ if(VRAM_ENABLE_VENDOR_LLAMA)
             llama-common
             llama
             Threads::Threads
+    )
+endif()
+
+if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS AND NOT EMSCRIPTEN)
+    add_executable(vram_fit_harness
+        cpp/tools/vram_fit_harness.cpp
+    )
+
+    target_link_libraries(vram_fit_harness
+        PRIVATE
+            vram_predictor_core
     )
 endif()
 

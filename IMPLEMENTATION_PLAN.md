@@ -19,7 +19,7 @@ This app will enable users to quickly estimate system requirements for running a
 
 - Core fitting algorithm exists in common/fit.cpp and public helper declarations in common/fit.h.
 - common_fit_params already computes projected model/context/compute memory and adjusts n_ctx, n_gpu_layers, tensor split, and tensor buffer overrides.
-- Added local vendor patch surface for deterministic memory simulation via `common_fit_params_with_memory_override(...)`.
+- Deterministic memory simulation now routes through `sim_backend` and stock `common_fit_params(...)`; only the Emscripten-safe fit logging hook remains patched in vendor llama.cpp.
 - Memory breakdown relies on llama_get_memory_breakdown from src/llama-ext.h (currently C++ extension API, not stable C API in include/llama.h).
 
 ### Existing parameter surface needed by UI
@@ -263,6 +263,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Verified production build (`npm run build` in `ui/`) produces clean output with no errors.
   - [x] Wired `VITE_WASM_BASE_URL` to accept full asset URLs (cross-port local dev) or relative paths (static hosting), and added a dedicated local assets server script that serves wasm/helper files in place without copy steps.
   - [x] Hardened `n_gpu_layers` UI handling so `-1` is preserved as "all layers on GPU" instead of drifting through invalid intermediate numeric states.
+  - [x] Added a raw JSON harness view at `/?view=harness` so wasm requests can be pasted, submitted, and inspected directly through the Svelte app.
 16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 17. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
   - [x] Added a new simulated backend module (`cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`) that exposes profile-aware fake ggml GPU devices (CUDA/Metal/Vulkan/Generic) with configurable free/total memory and null-terminated `ggml_backend_dev_t *` wiring for `llama_model_params.devices`.
@@ -271,6 +272,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Stabilized wasm in-process fit breakdown collection by using no-allocation model/context setup and falling back to non-fatal summary rows when detailed breakdown collection fails.
   - [x] Refined simulated device memory accounting so `ggml_backend_dev_memory` reports post-allocation free bytes (reducing negative/unbounded unaccounted memory artifacts in debug tables).
   - [x] Corrected `target_free_mib` to fit-margin conversion so large simulated free-memory values do not inflate margin requirements and force unexpected host placement.
+  - [x] Removed the vendor `common_fit_params_with_memory_override(...)` surface and rewired `vram_fit_harness` onto the shared `execute_fit_request(...)` path.
   - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel.
 
 ## 10. Change Log

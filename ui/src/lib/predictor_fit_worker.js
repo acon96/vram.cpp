@@ -118,6 +118,10 @@ function callPredict(module, request) {
     return JSON.parse(raw);
 }
 
+function cloneRequest(request) {
+    return JSON.parse(JSON.stringify(request));
+}
+
 async function ensureModule(config) {
     const normalizedConfig = {
         wasmJsUrl: new URL(config.wasmJsUrl, self.location.href).toString(),
@@ -209,6 +213,40 @@ async function handlePredict(message) {
     }
 }
 
+async function handlePredictJson(message) {
+    const module = await ensureModule(message.config);
+    const mountRoot = moduleConfig?.mountRoot || '/models';
+    ensureDirectory(module.FS, mountRoot);
+
+    const request = cloneRequest(message.request || {});
+    let virtualPath = null;
+
+    if (message.fileBuffer != null) {
+        const safeName = sanitizePathSegment(message.fileName);
+        virtualPath = `${mountRoot}/${message.jobId}_${safeName}`;
+        module.FS.writeFile(virtualPath, new Uint8Array(message.fileBuffer));
+
+        if (request?.model?.source === 'local') {
+            request.model.path = virtualPath;
+        }
+    }
+
+    try {
+        return callPredict(module, request);
+    } finally {
+        if (virtualPath != null) {
+            try {
+                module.FS.unlink(virtualPath);
+            } catch (error) {
+                debugError('handlePredictJson.unlinkError', {
+                    virtualPath,
+                    error,
+                });
+            }
+        }
+    }
+}
+
 self.onmessage = async (event) => {
     const message = event.data || {};
 
@@ -217,7 +255,7 @@ self.onmessage = async (event) => {
         return;
     }
 
-    if (message.type !== 'predict' && message.type !== 'get-system-info') {
+    if (message.type !== 'predict' && message.type !== 'predict-json' && message.type !== 'get-system-info') {
         return;
     }
 
@@ -234,7 +272,9 @@ self.onmessage = async (event) => {
             return;
         }
 
-        const result = await handlePredict(message);
+        const result = message.type === 'predict-json'
+            ? await handlePredictJson(message)
+            : await handlePredict(message);
         self.postMessage({
             type: 'result',
             jobId,
