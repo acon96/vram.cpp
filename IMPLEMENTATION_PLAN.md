@@ -230,6 +230,10 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [ ] Add 1-2 additional full-model fixtures to complete this item.
 7. [x] Build HF URL resolution + progressive byte-range request planning helper and wire it to `model.source = huggingface` request handling.
 8. [x] Execute remote HF range fetch loop and feed downloaded prefixes into parser.
+9. [x] Begin wiring in-process predictor API execution for llama-fit override mode so the exported API can return actual fitted results instead of planning-only output.
+  - [x] Add a reusable internal fit execution helper linked from predictor core when vendor llama/common is enabled.
+  - [x] Execute fit requests in-process from `vram_predictor_predict_json` with explicit device/host memory overrides.
+  - [x] Validate the execution path in a vendor-enabled native build and carry the same surface into a vendor-enabled wasm build.
 
 ## 10. Change Log
 
@@ -247,3 +251,5 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Replaced executable-driven fit orchestration in predictor API with harness planning semantics and added a native in-process fit harness (`vram_fit_harness`) linked to llama/common code.
 - 2026-04-23: Built and ran first native parity comparison using `gemma-3-270m-Q8_0.gguf` against `llama-fit-params`.
 - 2026-04-23: Added a maintainable vendor patch to llama/common fit APIs so predictor requests and the native harness can override detected host/device memory for deterministic hardware targeting.
+- 2026-04-23: Began replacing fit-mode planning-only API responses with in-process execution wiring so the exported predictor API can directly consume the override-capable llama/common path.
+- 2026-04-23: Added explicit `fit.execute_in_process` API execution, validated it in a vendor-enabled native test path, and produced a successful vendor-enabled Emscripten build after aligning the predictor target with llama.cpp's wasm64 configuration.

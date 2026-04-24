@@ -1,5 +1,6 @@
 #include "vram/predictor_api.h"
 
+#include "vram/fit_executor.h"
 #include "vram/gguf_prefix_parser.h"
 #include "vram/hf_range_fetch_helper.h"
 #include "vram/hf_range_plan.h"
@@ -197,9 +198,10 @@ extern "C" const char * vram_predictor_get_system_info_json(void) {
         {"features",
             {
                 {"metadataEstimator", false},
-                {"llamaFitMode", false},
+                {"llamaFitMode", vram::fit_execution_available()},
                 {"hfRangeFetch", true},
-                {"ggufPrefixParser", true}
+                {"ggufPrefixParser", true},
+                {"fitMemoryOverrideExecution", vram::fit_execution_available()}
             }
         }
     };
@@ -326,6 +328,8 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         }
 
         const uint64_t override_host_free_mib = json_u64_or_default(device, "host_ram_bytes", 0) / (1024 * 1024);
+        const bool fit_execution_enabled = vram::fit_execution_available();
+        const bool execute_in_process = fit_execution_enabled && json_bool_or_default(fit, "execute_in_process", false);
 
         std::vector<std::string> args;
         args.push_back("--model");
@@ -377,6 +381,69 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
         const std::string harness_bin = json_string_or_default(fit, "fit_harness_binary", "vram_fit_harness");
 
+        if (execute_in_process) {
+            vram::fit_execution_request exec_request;
+            exec_request.model_path = model_path;
+            exec_request.fit_target_mib = fit_target_mib;
+            exec_request.target_free_mib = target_free_mib;
+            exec_request.override_device_free_mib = override_device_free_mib;
+            exec_request.override_device_total_mib = override_device_total_mib;
+            exec_request.has_override_host_free_mib = override_host_free_mib > 0;
+            exec_request.has_override_host_total_mib = override_host_free_mib > 0;
+            exec_request.override_host_free_mib = override_host_free_mib;
+            exec_request.override_host_total_mib = override_host_free_mib;
+            exec_request.show_fit_logs = show_fit_logs;
+            exec_request.min_ctx = static_cast<uint32_t>(fit_ctx_min);
+            exec_request.n_ctx = static_cast<uint32_t>(n_ctx > 0 ? n_ctx : 4096);
+            exec_request.n_gpu_layers = runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()
+                ? static_cast<int32_t>(runtime["n_gpu_layers"].get<int64_t>())
+                : -1;
+
+            vram::fit_execution_result exec_result;
+            std::string exec_error;
+            if (!vram::execute_fit_request(exec_request, exec_result, exec_error)) {
+                json error = {
+                    {"ok", false},
+                    {"engine", "vram-cpp"},
+                    {"apiVersion", "0.1.0"},
+                    {"phase", "phase-4-fit-parity"},
+                    {"error", exec_error.empty() ? "fit_execution_failed" : exec_error}
+                };
+                response = error.dump();
+                return response.c_str();
+            }
+
+            json body = {
+                {"ok", exec_result.ok},
+                {"engine", "vram-cpp"},
+                {"apiVersion", "0.1.0"},
+                {"phase", "phase-4-fit-parity"},
+                {"mode", "fit"},
+                {"fit",
+                    {
+                        {"executedInProcess", true},
+                        {"binary", "in_process"},
+                        {"fitTargetMiB", exec_result.fit_target_mib},
+                        {"targetFreeMiB", target_free_mib},
+                        {"overrideDeviceFreeMiB", exec_result.device_free_mib},
+                        {"overrideDeviceTotalMiB", exec_result.device_total_mib},
+                        {"overrideHostFreeMiB", exec_result.host_free_mib},
+                        {"executeNative", false},
+                        {"recommended_n_ctx", exec_result.n_ctx},
+                        {"recommended_n_gpu_layers", exec_result.n_gpu_layers},
+                        {"status", exec_result.status},
+                        {"warnings", exec_result.warnings},
+                        {"limitations", {
+                            "Fit request executed in-process through the vendored llama/common patch surface.",
+                            "Current execution response returns fitted parameters first; detailed memory breakdown is the next wiring step."
+                        }}
+                    }
+                }
+            };
+            response = body.dump();
+            return response.c_str();
+        }
+
         json body = {
             {"ok", true},
             {"engine", "vram-cpp"},
@@ -387,6 +454,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 {
                     {"binary", harness_bin},
                     {"args", args},
+                    {"executedInProcess", false},
                     {"fitTargetMiB", fit_target_mib},
                     {"targetFreeMiB", target_free_mib},
                     {"overrideDeviceFreeMiB", override_device_free_mib},
@@ -395,6 +463,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                     {"executeNative", false},
                     {"limitations", {
                         "Predictor API does not shell out to llama-fit executables.",
+                        "Set fit.execute_in_process=true in a vendor-enabled build to run the fit request through the in-process override path.",
                         "Run in-process fit via vram_fit_harness (native) or embedded C++ fit bridge (wasm target integration step).",
                         "fit_target_mib maps to llama-fit margin-per-device semantics.",
                         "device.gpus[].free_bytes can override detected device memory for deterministic hardware simulation."

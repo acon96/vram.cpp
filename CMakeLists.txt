@@ -14,13 +14,18 @@ option(VRAM_ENABLE_VENDOR_LLAMA "Configure vendor/llama-cpp as an external subpr
 option(VRAM_BUILD_TESTS "Build local unit tests" ON)
 option(VRAM_BUILD_FIT_HARNESS "Build native in-process llama-fit harness (requires vendor llama enabled)" ON)
 
+if(EMSCRIPTEN AND VRAM_ENABLE_VENDOR_LLAMA)
+    add_compile_options("-sMEMORY64=1")
+    add_link_options("-sMEMORY64=1")
+endif()
+
 if(VRAM_ENABLE_VENDOR_LLAMA AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/CMakeLists.txt")
     # Keep llama.cpp available for future linking while avoiding full builds by default.
     set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build llama common library" FORCE)
     add_subdirectory(vendor/llama-cpp EXCLUDE_FROM_ALL)
 endif()
 
-if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS)
+if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS AND NOT EMSCRIPTEN)
     add_executable(vram_fit_harness
         tools/vram_fit_harness.cpp
     )
@@ -43,6 +48,7 @@ endif()
 
 add_library(vram_predictor_core STATIC
     src/predictor_api.cpp
+    src/fit_executor.cpp
     src/gguf_prefix_parser.cpp
     src/hf_range_plan.cpp
     src/hf_range_fetch_helper.cpp
@@ -57,6 +63,28 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/vendor/nlohmann/json.hpp
     target_include_directories(vram_predictor_core
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/vendor
+    )
+endif()
+
+if(VRAM_ENABLE_VENDOR_LLAMA)
+    target_compile_definitions(vram_predictor_core
+        PRIVATE
+            VRAM_HAS_LLAMA_FIT_EXECUTION=1
+    )
+
+    target_include_directories(vram_predictor_core
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/common
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/include
+    )
+
+    target_link_libraries(vram_predictor_core
+        PRIVATE
+            llama-common
+            llama
+            Threads::Threads
     )
 endif()
 
@@ -142,6 +170,19 @@ if(VRAM_BUILD_TESTS)
 
         if(TARGET vram_fit_harness)
             add_dependencies(vram_llama_fit_parity_tests vram_fit_harness)
+        endif()
+
+        if(VRAM_ENABLE_VENDOR_LLAMA)
+            add_executable(vram_api_fit_execution_tests
+                tests/predictor_api_fit_execution_tests.cpp
+            )
+
+            target_link_libraries(vram_api_fit_execution_tests
+                PRIVATE
+                    vram_predictor_core
+            )
+
+            add_test(NAME vram_api_fit_execution_tests COMMAND vram_api_fit_execution_tests)
         endif()
     endif()
 endif()

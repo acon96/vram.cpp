@@ -17,6 +17,7 @@ This repository currently contains Phase 0 + early Phase 2 scaffolding:
 - Local predictor API path that progressively parses GGUF prefixes from disk
 - Native in-process llama-fit harness (`vram_fit_harness`) linked against llama/common libraries
 - Vendored llama/common fit patch for explicit device/host memory overrides during fitting
+- Predictor API fit execution path behind explicit `fit.execute_in_process` opt-in when built with vendor llama support
 - Unit tests for parser/range behavior and predictor API integration
 
 ## Build (native dev smoke check)
@@ -41,6 +42,13 @@ emcmake cmake -S . -B build-wasm -DVRAM_ENABLE_VENDOR_LLAMA=OFF
 cmake --build build-wasm
 ```
 
+Vendor-enabled fit build:
+
+```bash
+emcmake cmake -S . -B build-wasm-vendor -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_TESTS=OFF
+cmake --build build-wasm-vendor
+```
+
 Detailed setup and troubleshooting: `docs/EMSCRIPTEN_SETUP.md`.
 
 Expected artifacts:
@@ -51,8 +59,8 @@ Expected artifacts:
 ## Next implementation steps
 
 1. Expand native llama-fit parity golden tests to 2-3 fixtures (Gemma Q8_0 baseline is implemented)
-2. Wire in-process fit bridge directly into predictor API runtime path
-3. Begin wiring wasm wrapper to llama fit internals
+2. Return detailed model/context/compute breakdowns from the in-process fit API path
+3. Build a JS-side wasm integration flow that mounts model bytes and calls `fit.execute_in_process`
 
 ## Native Fit Harness
 
@@ -89,3 +97,20 @@ build-fit-harness/vram_fit_harness \
 ```
 
 The override path is implemented as a vendor patch in `vendor/llama-cpp/common/fit.h` and `vendor/llama-cpp/common/fit.cpp` via `common_fit_params_with_memory_override(...)`. The repo also stores the corresponding rebaseable patch at `patches/llama-fit-memory-override.patch`. The harness and predictor API both target that same patch surface so the real app can reuse the exact override semantics instead of maintaining a harness-only fork.
+
+Predictor API fit execution example:
+
+```json
+{
+	"mode": "fit",
+	"model": {"source": "local", "path": "/models/gemma-3-270m-Q8_0.gguf"},
+	"runtime": {"n_ctx": 4096, "n_gpu_layers": -1, "cache_type_k": "f16", "cache_type_v": "f16"},
+	"device": {
+		"host_ram_bytes": 34359738368,
+		"fit_target_mib": [512],
+		"target_free_mib": [2048],
+		"gpus": [{"id": "gpu0", "free_bytes": 4294967296, "total_bytes": 8589934592}]
+	},
+	"fit": {"min_ctx": 1024, "execute_in_process": true}
+}
+```

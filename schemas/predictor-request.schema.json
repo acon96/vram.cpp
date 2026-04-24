@@ -85,6 +85,7 @@
       "properties": {
         "fit_harness_binary": { "type": "string" },
         "min_ctx": { "type": "integer", "minimum": 0 },
+        "execute_in_process": { "type": "boolean" },
         "show_fit_logs": { "type": "boolean" }
       }
     }
