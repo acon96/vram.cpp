@@ -2,7 +2,13 @@
 
 #include "vram/hf_range_plan.h"
 
+#include <array>
+#include <cstring>
 #include <cstdio>
+
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/fetch.h>
+#endif
 
 namespace vram {
 namespace {
@@ -30,6 +36,21 @@ std::string encode_component(const std::string & input, bool encode_slash) {
         out.push_back(k_hex[c & 0x0F]);
     }
 
+    return out;
+}
+
+std::string shell_escape_single_quoted(const std::string & input) {
+    std::string out;
+    out.reserve(input.size() + 2);
+    out.push_back('\'');
+    for (const char c : input) {
+        if (c == '\'') {
+            out += "'\\''";
+        } else {
+            out.push_back(c);
+        }
+    }
+    out.push_back('\'');
     return out;
 }
 
@@ -89,6 +110,109 @@ std::vector<hf_range_request> build_hf_prefix_range_requests(
     }
 
     return requests;
+}
+
+bool fetch_hf_range_bytes(
+    const hf_range_request & request,
+    std::vector<uint8_t> & out_bytes,
+    std::string & error) {
+    out_bytes.clear();
+    error.clear();
+
+    if (request.url.empty()) {
+        error = "empty_url";
+        return false;
+    }
+
+#if defined(__EMSCRIPTEN__)
+    emscripten_fetch_attr_t attr;
+    emscripten_fetch_attr_init(&attr);
+    std::strcpy(attr.requestMethod, "GET");
+    attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS;
+    attr.timeoutMSecs = 30000;
+
+    std::vector<const char *> headers;
+    headers.reserve(request.headers.size() * 2 + 1);
+    for (const auto & kv : request.headers) {
+        headers.push_back(kv.first.c_str());
+        headers.push_back(kv.second.c_str());
+    }
+    headers.push_back(nullptr);
+    attr.requestHeaders = headers.data();
+
+    emscripten_fetch_t * fetch = emscripten_fetch(&attr, request.url.c_str());
+    if (fetch == nullptr) {
+        error = "emscripten_fetch_failed";
+        return false;
+    }
+
+    const int status = static_cast<int>(fetch->status);
+    if (status < 200 || status >= 300) {
+        error = "http_status_" + std::to_string(status);
+        emscripten_fetch_close(fetch);
+        return false;
+    }
+
+    if (fetch->numBytes <= 0 || fetch->data == nullptr) {
+        error = "empty_response";
+        emscripten_fetch_close(fetch);
+        return false;
+    }
+
+    out_bytes.assign(
+        reinterpret_cast<const uint8_t *>(fetch->data),
+        reinterpret_cast<const uint8_t *>(fetch->data) + static_cast<size_t>(fetch->numBytes));
+    emscripten_fetch_close(fetch);
+    return true;
+#else
+    std::string command = "curl -L --silent --show-error --fail";
+    command += " --url ";
+    command += shell_escape_single_quoted(request.url);
+
+    for (const auto & header : request.headers) {
+        command += " -H ";
+        command += shell_escape_single_quoted(header.first + ": " + header.second);
+    }
+
+    command += " 2>/dev/null";
+
+    FILE * pipe = popen(command.c_str(), "r");
+    if (pipe == nullptr) {
+        error = "popen_failed";
+        return false;
+    }
+
+    std::array<unsigned char, 16384> chunk{};
+    while (true) {
+        const size_t n = std::fread(chunk.data(), 1, chunk.size(), pipe);
+        if (n > 0) {
+            out_bytes.insert(out_bytes.end(), chunk.data(), chunk.data() + n);
+        }
+
+        if (n < chunk.size()) {
+            if (std::feof(pipe)) {
+                break;
+            }
+            if (std::ferror(pipe)) {
+                break;
+            }
+        }
+    }
+
+    const int rc = pclose(pipe);
+    if (rc != 0) {
+        error = "curl_command_failed";
+        out_bytes.clear();
+        return false;
+    }
+
+    if (out_bytes.empty()) {
+        error = "empty_response";
+        return false;
+    }
+
+    return true;
+#endif
 }
 
 } // namespace vram

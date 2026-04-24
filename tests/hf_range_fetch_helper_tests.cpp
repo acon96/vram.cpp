@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -48,11 +49,22 @@ void test_build_range_requests() {
     assert(requests[0].headers[2].second == "Bearer hf_token");
 }
 
+void test_fetch_empty_url_fails() {
+    vram::hf_range_request req;
+    std::vector<uint8_t> bytes;
+    std::string error;
+
+    const bool ok = vram::fetch_hf_range_bytes(req, bytes, error);
+    assert(!ok);
+    assert(error == "empty_url");
+}
+
 } // namespace
 
 int main() {
     test_resolve_hf_file_url_defaults_revision();
     test_resolve_hf_file_url_encodes_spaces();
     test_build_range_requests();
+    test_fetch_empty_url_fails();
     return 0;
 }

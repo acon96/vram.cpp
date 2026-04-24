@@ -13,6 +13,7 @@ This repository currently contains Phase 0 + early Phase 2 scaffolding:
 - GGUF prefix parser prototype for partial metadata extraction
 - HF progressive prefix range planning helper
 - HF URL resolver for direct model-file range requests
+- HF range execution backend (browser fetch in wasm, curl fallback in native)
 - Local predictor API path that progressively parses GGUF prefixes from disk
 - Unit tests for parser/range behavior and predictor API integration
 
@@ -48,5 +49,4 @@ Expected artifacts:
 ## Next implementation steps
 
 1. Add native `llama-fit-params` parity golden tests for 2-3 full model fixtures
-2. Execute remote HF range-fetch loop and feed fetched prefixes into parser
-3. Begin wiring wasm wrapper to llama fit internals
+2. Begin wiring wasm wrapper to llama fit internals

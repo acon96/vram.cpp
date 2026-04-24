@@ -30,6 +30,14 @@ std::vector<hf_range_request> build_hf_prefix_range_requests(
     double growth_factor,
     const std::string & bearer_token = "");
 
+// Executes one range request using the active platform backend:
+// - wasm/emscripten: browser fetch API
+// - native: curl command fallback
+bool fetch_hf_range_bytes(
+    const hf_range_request & request,
+    std::vector<uint8_t> & out_bytes,
+    std::string & error);
+
 } // namespace vram
 
 #endif

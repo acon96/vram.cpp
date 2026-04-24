@@ -223,7 +223,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 5. [x] Connect local GGUF prefix parser flow to `vram_predictor_predict_json` with progressive prefix attempts.
 6. [ ] Add native `llama-fit-params` parity golden tests for 2-3 full model GGUF fixtures. Use ggml-org/gemma-3-270m-GGUF because it has a Q8_0 quant that is only ~200mb
 7. [x] Build HF URL resolution + progressive byte-range request planning helper and wire it to `model.source = huggingface` request handling.
-8. [ ] Execute remote HF range fetch loop and feed downloaded prefixes into parser.
+8. [x] Execute remote HF range fetch loop and feed downloaded prefixes into parser.
 
 ## 10. Change Log
 
@@ -237,3 +237,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Integrated local GGUF prefix parsing into predictor API requests and added API-level integration tests.
 - 2026-04-23: Added HF file URL resolver and progressive range request planner with helper tests, plus API support for Hugging Face request planning output.
 - 2026-04-23: Validated first Emscripten build (`vram_predictor_wasm.js/.wasm`) and added a dedicated setup guide for emsdk activation and wasm build commands.
+- 2026-04-23: Implemented platform-aware HF range execution backend (Emscripten fetch in browser/WASM, curl fallback in native) and fed fetched prefixes directly into the GGUF parser.

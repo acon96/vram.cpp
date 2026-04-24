@@ -84,6 +84,19 @@ double json_double_or_default(const json & obj, const char * key, double fallbac
     return value.get<double>();
 }
 
+bool json_bool_or_default(const json & obj, const char * key, bool fallback) {
+    if (!obj.is_object() || !obj.contains(key)) {
+        return fallback;
+    }
+
+    const json & value = obj[key];
+    if (!value.is_boolean()) {
+        return fallback;
+    }
+
+    return value.get<bool>();
+}
+
 json tensor_to_json(const vram::gguf_tensor_info & tensor) {
     return {
         {"name", tensor.name},
@@ -135,7 +148,7 @@ extern "C" const char * vram_predictor_get_system_info_json(void) {
             {
                 {"metadataEstimator", false},
                 {"llamaFitMode", false},
-                {"hfRangeFetch", false},
+                {"hfRangeFetch", true},
                 {"ggufPrefixParser", true}
             }
         }
@@ -221,6 +234,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             const uint64_t initial_bytes = json_u64_or_default(fetch, "initial_bytes", k_default_initial_prefix_bytes);
             const uint64_t max_bytes = json_u64_or_default(fetch, "max_bytes", k_default_max_prefix_bytes);
             const double growth_factor = json_double_or_default(fetch, "growth_factor", 2.0);
+            const bool execute_remote = json_bool_or_default(fetch, "execute_remote", false);
 
             const auto requests = vram::build_hf_prefix_range_requests(loc, initial_bytes, max_bytes, growth_factor, token);
             json planned = json::array();
@@ -233,17 +247,110 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 });
             }
 
-            json body = {
-                {"ok", true},
+            if (!execute_remote) {
+                json body = {
+                    {"ok", true},
+                    {"engine", "vram-cpp"},
+                    {"apiVersion", "0.1.0"},
+                    {"phase", "phase-2-prefix-parser"},
+                    {"source", "huggingface"},
+                    {"resolvedUrl", url},
+                    {"plannedRequests", planned},
+                    {"message", "HF range request planning is ready; set fetch.execute_remote=true to execute requests with platform backend (browser fetch in wasm, curl fallback in native)."}
+                };
+                response = body.dump();
+                return response.c_str();
+            }
+
+            json attempts = json::array();
+            uint64_t min_required = 0;
+            std::string last_error;
+
+            for (const auto & req : requests) {
+                std::vector<uint8_t> fetched;
+                std::string fetch_error;
+                const bool ok_fetch = vram::fetch_hf_range_bytes(req, fetched, fetch_error);
+
+                if (!ok_fetch) {
+                    json error = {
+                        {"ok", false},
+                        {"engine", "vram-cpp"},
+                        {"apiVersion", "0.1.0"},
+                        {"phase", "phase-2-prefix-parser"},
+                        {"source", "huggingface"},
+                        {"error", "hf_range_fetch_failed"},
+                        {"detail", fetch_error},
+                        {"resolvedUrl", url},
+                        {"plannedRequests", planned},
+                        {"attempts", attempts}
+                    };
+                    response = error.dump();
+                    return response.c_str();
+                }
+
+                const auto parsed_prefix = vram::parse_gguf_prefix(fetched.data(), fetched.size(), k_max_tensor_preview);
+                attempts.push_back({
+                    {"requestedBytes", req.end + 1},
+                    {"fetchedBytes", fetched.size()},
+                    {"status", parse_status_to_json(parsed_prefix.status)},
+                    {"minimumRequiredBytes", parsed_prefix.minimum_required_bytes}
+                });
+
+                if (parsed_prefix.status == vram::gguf_prefix_parse_status::complete) {
+                    json tensors = json::array();
+                    for (const auto & tensor : parsed_prefix.metadata.tensors) {
+                        tensors.push_back(tensor_to_json(tensor));
+                    }
+
+                    json body = {
+                        {"ok", true},
+                        {"engine", "vram-cpp"},
+                        {"apiVersion", "0.1.0"},
+                        {"phase", "phase-2-prefix-parser"},
+                        {"mode", parsed.contains("mode") ? parsed["mode"] : json("metadata")},
+                        {"source", "huggingface"},
+                        {"resolvedUrl", url},
+                        {"metadata",
+                            {
+                                {"version", parsed_prefix.metadata.version},
+                                {"kvCount", parsed_prefix.metadata.kv_count},
+                                {"tensorCount", parsed_prefix.metadata.tensor_count},
+                                {"bytesConsumed", parsed_prefix.metadata.bytes_consumed},
+                                {"tensorListTruncated", parsed_prefix.metadata.tensor_list_truncated},
+                                {"tensors", tensors},
+                            }
+                        },
+                        {"plannedRequests", planned},
+                        {"attempts", attempts},
+                        {"fetchExecuted", true}
+                    };
+                    response = body.dump();
+                    return response.c_str();
+                }
+
+                if (parsed_prefix.status == vram::gguf_prefix_parse_status::need_more_data) {
+                    min_required = std::max(min_required, parsed_prefix.minimum_required_bytes);
+                    continue;
+                }
+
+                last_error = parsed_prefix.error.empty() ? "invalid_gguf_format" : parsed_prefix.error;
+                break;
+            }
+
+            json error = {
+                {"ok", false},
                 {"engine", "vram-cpp"},
                 {"apiVersion", "0.1.0"},
                 {"phase", "phase-2-prefix-parser"},
                 {"source", "huggingface"},
+                {"error", last_error.empty() ? "insufficient_prefix_bytes" : last_error},
+                {"minimumRequiredBytes", min_required},
                 {"resolvedUrl", url},
                 {"plannedRequests", planned},
-                {"message", "HF range request planning is ready; network fetch execution is next."}
+                {"attempts", attempts},
+                {"fetchExecuted", true}
             };
-            response = body.dump();
+            response = error.dump();
             return response.c_str();
         }
 

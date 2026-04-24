@@ -50,6 +50,7 @@ if(EMSCRIPTEN AND VRAM_BUILD_WASM)
 
     target_link_options(vram_predictor_wasm PRIVATE
         "-sALLOW_MEMORY_GROWTH=1"
+        "-sFETCH=1"
         "-sENVIRONMENT=web,worker"
         "-sMODULARIZE=1"
         "-sEXPORT_NAME=createVRAMPredictorModule"
