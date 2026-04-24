@@ -19,7 +19,21 @@
     const isJsonHarnessView = appView === 'harness';
     const hfInitialPrefixBytes = 2 * 1024 * 1024;
     const hfMaxPrefixBytes = 16 * 1024 * 1024;
-    const hfGrowthFactor = 2.0;
+    const hfPrefixChunkBytes = 2 * 1024 * 1024;
+    const hardwareConfigStorageKey = 'vram_cpp_hardware_config_v1';
+    const ggufTypeUint8 = 0;
+    const ggufTypeInt8 = 1;
+    const ggufTypeUint16 = 2;
+    const ggufTypeInt16 = 3;
+    const ggufTypeUint32 = 4;
+    const ggufTypeInt32 = 5;
+    const ggufTypeFloat32 = 6;
+    const ggufTypeBool = 7;
+    const ggufTypeString = 8;
+    const ggufTypeArray = 9;
+    const ggufTypeUint64 = 10;
+    const ggufTypeInt64 = 11;
+    const ggufTypeFloat64 = 12;
     globalThis.__VRAM_DEBUG__ = wasmDebugEnabled;
 
     function debugLog(event, payload) {
@@ -52,8 +66,81 @@
         wasmJsUrl,
     });
 
+    function normalizeHardwareGpu(input, fallbackIndex) {
+        const totalGiB = Number.isFinite(Number(input?.totalGiB))
+            ? Math.max(0.5, Number(input.totalGiB))
+            : 8;
+        const freeGiB = Number.isFinite(Number(input?.freeGiB))
+            ? Math.max(0, Math.min(totalGiB, Number(input.freeGiB)))
+            : totalGiB;
+        const parsedIndex = Number.isFinite(Number(input?.index))
+            ? Math.max(0, Math.trunc(Number(input.index)))
+            : fallbackIndex;
+
+        return {
+            name: typeof input?.name === 'string' && input.name.trim().length > 0
+                ? input.name
+                : `GPU ${fallbackIndex}`,
+            index: parsedIndex,
+            totalGiB,
+            freeGiB,
+        };
+    }
+
+    function readStoredHardwareConfig() {
+        if (typeof window === 'undefined' || window.localStorage == null) {
+            return {};
+        }
+
+        try {
+            const raw = window.localStorage.getItem(hardwareConfigStorageKey);
+            if (!raw) {
+                return {};
+            }
+
+            const parsed = JSON.parse(raw);
+            if (parsed == null || typeof parsed !== 'object') {
+                return {};
+            }
+
+            const gpus = Array.isArray(parsed.gpus)
+                ? parsed.gpus.slice(0, 4).map((gpu, index) => normalizeHardwareGpu(gpu, index))
+                : undefined;
+
+            return {
+                hostRamGiB: Number.isFinite(Number(parsed.hostRamGiB))
+                    ? Math.max(1, Number(parsed.hostRamGiB))
+                    : undefined,
+                fitTargetMiB: Number.isFinite(Number(parsed.fitTargetMiB))
+                    ? Math.max(0, Math.trunc(Number(parsed.fitTargetMiB)))
+                    : undefined,
+                targetFreeMiB: Number.isFinite(Number(parsed.targetFreeMiB))
+                    ? Math.max(0, Math.trunc(Number(parsed.targetFreeMiB)))
+                    : undefined,
+                gpus,
+            };
+        } catch (error) {
+            debugError('hardwareConfig.read.failed', { error });
+            return {};
+        }
+    }
+
+    const defaultParams = {
+        nCtx: 4096,
+        nBatch: 2048,
+        nUbatch: 512,
+        cacheTypeK: 'f16',
+        cacheTypeV: 'f16',
+        nGpuLayers: -1,
+        hostRamGiB: 32,
+        gpus: [],
+        fitTargetMiB: 512,
+        targetFreeMiB: 2048,
+    };
+    const storedHardwareConfig = readStoredHardwareConfig();
+
     // ── State ─────────────────────────────────────────────────────────────────
-    let modelSource = $state('local');
+    let modelSource = $state('huggingface');
     let selectedFile = $state(null);
     let hfSelection = $state({
         repo: '',
@@ -67,27 +154,43 @@
         metadata: null,
         error: '',
     });
+    let hfPreparedFit = $state(null);
 
     let params = $state({
-        nCtx: 4096,
-        nBatch: 2048,
-        nUbatch: 512,
-        cacheTypeK: 'f16',
-        cacheTypeV: 'f16',
-        nGpuLayers: -1,
-        hostRamGiB: 32,
-        gpus: [],
-        fitTargetMiB: 512,
-        targetFreeMiB: 2048,
+        ...defaultParams,
+        hostRamGiB: storedHardwareConfig.hostRamGiB ?? defaultParams.hostRamGiB,
+        fitTargetMiB: storedHardwareConfig.fitTargetMiB ?? defaultParams.fitTargetMiB,
+        targetFreeMiB: storedHardwareConfig.targetFreeMiB ?? defaultParams.targetFreeMiB,
+        gpus: Array.isArray(storedHardwareConfig.gpus)
+            ? storedHardwareConfig.gpus
+            : defaultParams.gpus,
     });
 
     let status = $state('idle'); // 'idle' | 'loading-wasm' | 'running' | 'done' | 'error'
     let errorMsg = $state('');
     let result = $state(null);
 
+    function buildHfSelectionCacheKey(selection) {
+        const repo = String(selection?.repo || '').trim();
+        const file = String(selection?.file || '').trim();
+        const revision = String(selection?.revision || 'main').trim() || 'main';
+        const token = String(selection?.token || '').trim();
+        return `${repo}||${file}||${revision}||${token}`;
+    }
+
+    function clearPreparedHfFit(reason) {
+        if (hfPreparedFit != null) {
+            debugLog('hf.prepared.clear', { reason });
+        }
+        hfPreparedFit = null;
+    }
+
     // ── Handlers ──────────────────────────────────────────────────────────────
     function handleModelSourceChange(nextSource) {
         modelSource = nextSource;
+        if (nextSource !== 'huggingface') {
+            clearPreparedHfFit('model_source_changed');
+        }
         result = null;
         status = 'idle';
         errorMsg = '';
@@ -99,6 +202,7 @@
             sizeBytes: file?.size,
             type: file?.type,
         });
+        clearPreparedHfFit('local_file_selected');
         modelSource = 'local';
         selectedFile = file;
         result = null;
@@ -107,6 +211,11 @@
     }
 
     function handleHuggingFaceSelectionChange(selection) {
+        const nextCacheKey = buildHfSelectionCacheKey(selection);
+        if (selection?.validated !== true || hfPreparedFit?.cacheKey !== nextCacheKey) {
+            clearPreparedHfFit('hf_selection_changed');
+        }
+
         hfSelection = {
             repo: selection?.repo ?? '',
             file: selection?.file ?? '',
@@ -131,6 +240,27 @@
         debugLog('handleParamsChange', p);
         params = p;
     }
+
+    $effect(() => {
+        if (typeof window === 'undefined' || window.localStorage == null) {
+            return;
+        }
+
+        const hardwareConfig = {
+            hostRamGiB: params.hostRamGiB,
+            fitTargetMiB: params.fitTargetMiB,
+            targetFreeMiB: params.targetFreeMiB,
+            gpus: Array.isArray(params.gpus)
+                ? params.gpus.slice(0, 4).map((gpu, index) => normalizeHardwareGpu(gpu, index))
+                : [],
+        };
+
+        try {
+            window.localStorage.setItem(hardwareConfigStorageKey, JSON.stringify(hardwareConfig));
+        } catch (error) {
+            debugError('hardwareConfig.write.failed', { error });
+        }
+    });
 
     function encodePathPreservingSlashes(path) {
         return String(path || '')
@@ -159,36 +289,30 @@
         return `https://huggingface.co/${encodedRepo}/resolve/${encodedRevision}/${encodedFile}`;
     }
 
-    function buildHfRangePlan(initialBytes, maxBytes, growthFactor) {
+    function buildHfRangePlan(initialBytes, maxBytes, stepBytes) {
         const plan = [];
         if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
             return plan;
         }
 
-        let current = initialBytes;
-        if (!Number.isFinite(current) || current <= 0 || current > maxBytes) {
-            current = Math.min(1024 * 1024, maxBytes);
+        const firstChunk = Number.isFinite(initialBytes) && initialBytes > 0
+            ? Math.trunc(initialBytes)
+            : Math.min(2 * 1024 * 1024, Math.trunc(maxBytes));
+        const chunkStep = Number.isFinite(stepBytes) && stepBytes > 0
+            ? Math.trunc(stepBytes)
+            : firstChunk;
+
+        if (firstChunk <= 0 || chunkStep <= 0) {
+            return plan;
         }
-        if (current <= 0) {
-            current = 1;
+
+        for (let current = firstChunk; current <= maxBytes; current += chunkStep) {
+            plan.push({ start: 0, end: current - 1 });
         }
 
-        const growth = Number.isFinite(growthFactor) && growthFactor > 1.0 ? growthFactor : 2.0;
-
-        while (true) {
-            plan.push({ start: 0, end: Math.trunc(current) - 1 });
-            if (current >= maxBytes) {
-                break;
-            }
-
-            let next = Math.ceil(current * growth);
-            if (next <= current) {
-                next = current + 1;
-            }
-            if (next > maxBytes) {
-                next = maxBytes;
-            }
-            current = next;
+        const lastEnd = plan.length > 0 ? plan[plan.length - 1].end : -1;
+        if (lastEnd + 1 < maxBytes) {
+            plan.push({ start: 0, end: Math.trunc(maxBytes) - 1 });
         }
 
         return plan;
@@ -340,6 +464,326 @@
         return 0;
     }
 
+    function ggufScalarTypeByteSize(valueType) {
+        if (valueType === ggufTypeUint8 || valueType === ggufTypeInt8 || valueType === ggufTypeBool) {
+            return 1;
+        }
+        if (valueType === ggufTypeUint16 || valueType === ggufTypeInt16) {
+            return 2;
+        }
+        if (valueType === ggufTypeUint32 || valueType === ggufTypeInt32 || valueType === ggufTypeFloat32) {
+            return 4;
+        }
+        if (valueType === ggufTypeUint64 || valueType === ggufTypeInt64 || valueType === ggufTypeFloat64) {
+            return 8;
+        }
+        return 0;
+    }
+
+    function readU32LE(bytes, offset) {
+        if (offset + 4 > bytes.length) {
+            return null;
+        }
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        return dv.getUint32(offset, true);
+    }
+
+    function readI32LE(bytes, offset) {
+        if (offset + 4 > bytes.length) {
+            return null;
+        }
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        return dv.getInt32(offset, true);
+    }
+
+    function readU64LEAsNumber(bytes, offset) {
+        if (offset + 8 > bytes.length) {
+            return null;
+        }
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const low = dv.getUint32(offset, true);
+        const high = dv.getUint32(offset + 4, true);
+        const value = high * 4294967296 + low;
+        return Number.isSafeInteger(value) ? value : null;
+    }
+
+    function readI64LEAsNumber(bytes, offset) {
+        if (offset + 8 > bytes.length) {
+            return null;
+        }
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const low = dv.getUint32(offset, true);
+        const highSigned = dv.getInt32(offset + 4, true);
+        const value = highSigned * 4294967296 + low;
+        return Number.isSafeInteger(value) ? value : null;
+    }
+
+    function readFloat32LE(bytes, offset) {
+        if (offset + 4 > bytes.length) {
+            return null;
+        }
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        return dv.getFloat32(offset, true);
+    }
+
+    function readFloat64LE(bytes, offset) {
+        if (offset + 8 > bytes.length) {
+            return null;
+        }
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        return dv.getFloat64(offset, true);
+    }
+
+    function readGgufString(bytes, offset) {
+        const len = readU64LEAsNumber(bytes, offset);
+        if (len == null) {
+            return null;
+        }
+
+        const start = offset + 8;
+        const end = start + len;
+        if (end > bytes.length) {
+            return null;
+        }
+
+        const decoder = new TextDecoder('utf-8');
+        return {
+            value: decoder.decode(bytes.subarray(start, end)),
+            nextOffset: end,
+        };
+    }
+
+    function skipGgufValue(bytes, offset, valueType) {
+        if (valueType === ggufTypeString) {
+            const str = readGgufString(bytes, offset);
+            return str == null ? null : str.nextOffset;
+        }
+
+        if (valueType === ggufTypeArray) {
+            const elemType = readU32LE(bytes, offset);
+            const count = readU64LEAsNumber(bytes, offset + 4);
+            if (elemType == null || count == null || elemType === ggufTypeArray) {
+                return null;
+            }
+
+            let next = offset + 12;
+            if (elemType === ggufTypeString) {
+                for (let i = 0; i < count; i += 1) {
+                    const str = readGgufString(bytes, next);
+                    if (str == null) {
+                        return null;
+                    }
+                    next = str.nextOffset;
+                }
+                return next;
+            }
+
+            const elemSize = ggufScalarTypeByteSize(elemType);
+            if (elemSize <= 0) {
+                return null;
+            }
+            const byteCount = elemSize * count;
+            if (!Number.isSafeInteger(byteCount)) {
+                return null;
+            }
+            const end = next + byteCount;
+            return end <= bytes.length ? end : null;
+        }
+
+        const scalarSize = ggufScalarTypeByteSize(valueType);
+        if (scalarSize <= 0) {
+            return null;
+        }
+        const next = offset + scalarSize;
+        return next <= bytes.length ? next : null;
+    }
+
+    function readGgufNumericValue(bytes, offset, valueType) {
+        if (valueType === ggufTypeUint8) {
+            return bytes[offset];
+        }
+        if (valueType === ggufTypeInt8) {
+            return (bytes[offset] << 24) >> 24;
+        }
+        if (valueType === ggufTypeUint16) {
+            const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            return dv.getUint16(offset, true);
+        }
+        if (valueType === ggufTypeInt16) {
+            const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            return dv.getInt16(offset, true);
+        }
+        if (valueType === ggufTypeUint32) {
+            return readU32LE(bytes, offset);
+        }
+        if (valueType === ggufTypeInt32) {
+            return readI32LE(bytes, offset);
+        }
+        if (valueType === ggufTypeFloat32) {
+            return readFloat32LE(bytes, offset);
+        }
+        if (valueType === ggufTypeBool) {
+            return bytes[offset] !== 0 ? 1 : 0;
+        }
+        if (valueType === ggufTypeUint64) {
+            return readU64LEAsNumber(bytes, offset);
+        }
+        if (valueType === ggufTypeInt64) {
+            return readI64LEAsNumber(bytes, offset);
+        }
+        if (valueType === ggufTypeFloat64) {
+            return readFloat64LE(bytes, offset);
+        }
+        return null;
+    }
+
+    function extractContextLengthFromPrefix(prefixBytes) {
+        const bytes = prefixBytes instanceof Uint8Array
+            ? prefixBytes
+            : new Uint8Array(prefixBytes || []);
+
+        if (bytes.length < 24) {
+            return 0;
+        }
+
+        if (bytes[0] !== 0x47 || bytes[1] !== 0x47 || bytes[2] !== 0x55 || bytes[3] !== 0x46) {
+            return 0;
+        }
+
+        let pos = 4;
+        const version = readU32LE(bytes, pos);
+        if (version == null || version < 2 || version > 3) {
+            return 0;
+        }
+        pos += 4;
+
+        const tensorCount = readU64LEAsNumber(bytes, pos);
+        const kvCount = readU64LEAsNumber(bytes, pos + 8);
+        if (tensorCount == null || kvCount == null) {
+            return 0;
+        }
+        pos += 16;
+
+        let architecture = '';
+        const candidates = [];
+
+        for (let i = 0; i < kvCount; i += 1) {
+            const keyParsed = readGgufString(bytes, pos);
+            if (keyParsed == null) {
+                return 0;
+            }
+            const key = keyParsed.value;
+            pos = keyParsed.nextOffset;
+
+            const valueType = readU32LE(bytes, pos);
+            if (valueType == null) {
+                return 0;
+            }
+            pos += 4;
+
+            if (key === 'general.architecture' && valueType === ggufTypeString) {
+                const parsedString = readGgufString(bytes, pos);
+                if (parsedString == null) {
+                    return 0;
+                }
+                architecture = parsedString.value;
+                pos = parsedString.nextOffset;
+                continue;
+            }
+
+            const isContextKey = key === 'context_length' || key.endsWith('.context_length');
+            if (isContextKey) {
+                const numericValue = readGgufNumericValue(bytes, pos, valueType);
+                const next = skipGgufValue(bytes, pos, valueType);
+                if (next == null) {
+                    return 0;
+                }
+                pos = next;
+
+                if (numericValue != null && Number.isFinite(Number(numericValue))) {
+                    const parsedCtx = Math.trunc(Number(numericValue));
+                    if (parsedCtx > 0) {
+                        candidates.push({ key, value: parsedCtx });
+                    }
+                }
+                continue;
+            }
+
+            const next = skipGgufValue(bytes, pos, valueType);
+            if (next == null) {
+                return 0;
+            }
+            pos = next;
+        }
+
+        if (candidates.length === 0) {
+            return 0;
+        }
+
+        if (architecture.length > 0) {
+            const exactKey = `${architecture}.context_length`;
+            const exact = candidates.find((entry) => entry.key === exactKey);
+            if (exact != null) {
+                return exact.value;
+            }
+        }
+
+        return candidates[0].value;
+    }
+
+    function buildPreparedHfFitResult(selection, requestUrl, requests, attempts, prefixBytes, fetchResult, metadataResponse) {
+        const sizeFromHeaders = parseTotalBytesFromFetchHeaders(fetchResult);
+        const sizeFromSelection = Number.isFinite(Number(selection?.fileSizeBytes))
+            ? Math.max(0, Math.trunc(Number(selection.fileSizeBytes)))
+            : 0;
+        const logicalFileSizeBytes = sizeFromHeaders > 0
+            ? sizeFromHeaders
+            : sizeFromSelection;
+        const contextLength = extractContextLengthFromPrefix(prefixBytes);
+
+        return {
+            ...metadataResponse,
+            source: 'huggingface',
+            resolvedUrl: requestUrl,
+            requests,
+            attempts,
+            prefixBytes,
+            logicalFileSizeBytes,
+            contextLength,
+            cacheKey: buildHfSelectionCacheKey({ ...selection, resolvedUrl: requestUrl }),
+        };
+    }
+
+    async function runFitFromPreparedPrefix(client, preparedFit, predictInput) {
+        const fitFile = new File([preparedFit.prefixBytes], 'hf_cached_prefix.gguf', {
+            type: 'application/octet-stream',
+        });
+
+        const fitInput = {
+            ...predictInput,
+            virtualFileSizeBytes: preparedFit.logicalFileSizeBytes > preparedFit.prefixBytes.byteLength
+                ? preparedFit.logicalFileSizeBytes
+                : undefined,
+        };
+
+        debugLog('hf.cachedFit.start', {
+            resolvedUrl: preparedFit.resolvedUrl,
+            fitFileBytes: preparedFit.prefixBytes.byteLength,
+            logicalFileSizeBytes: preparedFit.logicalFileSizeBytes,
+            attempts: preparedFit.attempts,
+        });
+
+        const fitResponse = await client.predictMountedFit(fitFile, fitInput);
+        return {
+            ...fitResponse,
+            source: 'huggingface',
+            resolvedUrl: preparedFit.resolvedUrl,
+            requests: preparedFit.requests,
+            attempts: preparedFit.attempts,
+            hfMetadata: preparedFit.metadata ?? null,
+        };
+    }
+
     async function runHfMetadataFromBrowser(client, selection) {
         const resolvedUrl = (selection?.resolvedUrl || '').trim();
         const canonicalUrl = buildCanonicalHfFileUrl(selection || {});
@@ -351,7 +795,7 @@
             };
         }
 
-        const plan = buildHfRangePlan(hfInitialPrefixBytes, hfMaxPrefixBytes, hfGrowthFactor);
+        const plan = buildHfRangePlan(hfInitialPrefixBytes, hfMaxPrefixBytes, hfPrefixChunkBytes);
 
         const candidateUrls = [];
         if (resolvedUrl.length > 0) {
@@ -369,7 +813,7 @@
             candidateUrls,
             initialBytes: hfInitialPrefixBytes,
             maxBytes: hfMaxPrefixBytes,
-            growthFactor: hfGrowthFactor,
+            chunkStepBytes: hfPrefixChunkBytes,
             plan,
             hasToken: (selection?.token || '').trim().length > 0,
         });
@@ -518,13 +962,15 @@
                         },
                     });
 
-                    return {
-                        ...response,
-                        source: 'huggingface',
-                        resolvedUrl: requestUrl,
+                    return buildPreparedHfFitResult(
+                        selection,
+                        requestUrl,
                         requests,
                         attempts,
-                    };
+                        prefixBytes,
+                        fetchResult,
+                        response,
+                    );
                 }
 
                 lastErrorResponse = response;
@@ -586,7 +1032,7 @@
             };
         }
 
-        const plan = buildHfRangePlan(hfInitialPrefixBytes, hfMaxPrefixBytes, hfGrowthFactor);
+        const plan = buildHfRangePlan(hfInitialPrefixBytes, hfMaxPrefixBytes, hfPrefixChunkBytes);
 
         const candidateUrls = [];
         if (resolvedUrl.length > 0) {
@@ -604,7 +1050,7 @@
             candidateUrls,
             initialBytes: hfInitialPrefixBytes,
             maxBytes: hfMaxPrefixBytes,
-            growthFactor: hfGrowthFactor,
+            chunkStepBytes: hfPrefixChunkBytes,
             plan,
             hasToken: (selection?.token || '').trim().length > 0,
             predictInput,
@@ -741,33 +1187,27 @@
                 });
 
                 if (metadataResponse?.ok === true) {
-                    const fitFile = new File([prefixBytes], `hf_fit_prefix_${range.end + 1}.gguf`, {
-                        type: 'application/octet-stream',
-                    });
-                    const sizeFromHeaders = parseTotalBytesFromFetchHeaders(fetchResult);
-                    const sizeFromSelection = Number.isFinite(Number(selection?.fileSizeBytes))
-                        ? Math.max(0, Math.trunc(Number(selection.fileSizeBytes)))
-                        : 0;
-                    const logicalFileSizeBytes = sizeFromHeaders > 0
-                        ? sizeFromHeaders
-                        : sizeFromSelection;
-                    const fitInput = {
-                        ...predictInput,
-                        virtualFileSizeBytes: logicalFileSizeBytes > prefixBytes.byteLength
-                            ? logicalFileSizeBytes
-                            : undefined,
-                    };
+                    const preparedFit = buildPreparedHfFitResult(
+                        selection,
+                        requestUrl,
+                        requests,
+                        attempts,
+                        prefixBytes,
+                        fetchResult,
+                        metadataResponse,
+                    );
+                    hfPreparedFit = preparedFit;
 
                     debugLog('hf.browserFit.attempt.fit.start', {
                         candidateIndex,
                         attemptIndex,
                         requestUrl,
-                        fitFileBytes: prefixBytes.byteLength,
-                        logicalFileSizeBytes,
-                        logicalSizeSource: sizeFromHeaders > 0 ? 'headers' : 'hf_tree',
+                        fitFileBytes: preparedFit.prefixBytes.byteLength,
+                        logicalFileSizeBytes: preparedFit.logicalFileSizeBytes,
+                        logicalSizeSource: preparedFit.logicalFileSizeBytes > 0 ? 'headers_or_tree' : 'none',
                     });
 
-                    const fitResponse = await client.predictMountedFit(fitFile, fitInput);
+                    const fitResponse = await runFitFromPreparedPrefix(client, preparedFit, predictInput);
 
                     debugLog('hf.browserFit.attempt.fit.result', {
                         candidateIndex,
@@ -777,14 +1217,7 @@
                         fitStatusText: describeFitStatus(fitResponse?.fit?.status),
                     });
 
-                    return {
-                        ...fitResponse,
-                        source: 'huggingface',
-                        resolvedUrl: requestUrl,
-                        requests,
-                        attempts,
-                        hfMetadata: metadataResponse.metadata ?? null,
-                    };
+                    return fitResponse;
                 }
 
                 lastErrorResponse = metadataResponse;
@@ -840,7 +1273,25 @@
             debugEnabled: wasmDebugEnabled,
         });
 
-        return runHfMetadataFromBrowser(client, selection);
+        const response = await runHfMetadataFromBrowser(client, selection);
+        if (response?.ok === true && response?.prefixBytes instanceof Uint8Array) {
+            hfPreparedFit = response;
+            if (Number.isFinite(Number(response.contextLength)) && Number(response.contextLength) > 0) {
+                const detectedNctx = Math.max(1, Math.trunc(Number(response.contextLength)));
+                params = {
+                    ...params,
+                    nCtx: detectedNctx,
+                };
+                debugLog('hf.browserMetadata.detectedContextLength', {
+                    detectedNctx,
+                });
+            }
+
+            const { prefixBytes, logicalFileSizeBytes, contextLength, cacheKey, ...responseForUi } = response;
+            return responseForUi;
+        }
+
+        return response;
     }
 
     function buildFitFailureDetails(response, predictInput) {
@@ -926,13 +1377,20 @@
             const predictInput = buildPredictFitInput();
 
             if (modelSource === 'huggingface') {
+                const selectionCacheKey = buildHfSelectionCacheKey(hfSelection);
+                const hasPreparedFit = hfPreparedFit?.cacheKey === selectionCacheKey
+                    && hfPreparedFit?.prefixBytes instanceof Uint8Array;
+
                 debugLog('runPrediction.hfFitFromBrowser.input', {
                     selection: hfSelection,
                     predictInput,
+                    hasPreparedFit,
                 });
 
                 const predictStartedAt = performance.now();
-                const res = await runHfFitFromBrowser(client, hfSelection, predictInput);
+                const res = hasPreparedFit
+                    ? await runFitFromPreparedPrefix(client, hfPreparedFit, predictInput)
+                    : await runHfFitFromBrowser(client, hfSelection, predictInput);
                 const predictElapsedMs = Math.round((performance.now() - predictStartedAt) * 100) / 100;
 
                 debugLog('runPrediction.hfFitFromBrowser.output', {
@@ -997,9 +1455,7 @@
     const statusLabel = $derived({
         idle: '',
         'loading-wasm': 'Preparing WASM worker…',
-        running: modelSource === 'local'
-            ? 'Running fit prediction…'
-            : 'Downloading HF prefix and running fit prediction…',
+        running: 'Running fit prediction…',
         done: '',
         error: '',
     }[status] ?? '');

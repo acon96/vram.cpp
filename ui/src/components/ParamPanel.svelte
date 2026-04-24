@@ -149,7 +149,7 @@
 
         <div class="field-row">
             <div class="field">
-                <label for="cache-k">KV cache K type</label>
+                <label for="cache-k">K-cache type</label>
                 <select
                     id="cache-k"
                     value={params.cacheTypeK}
@@ -162,7 +162,7 @@
             </div>
 
             <div class="field">
-                <label for="cache-v">KV cache V type</label>
+                <label for="cache-v">V-cache type</label>
                 <select
                     id="cache-v"
                     value={params.cacheTypeV}
@@ -235,7 +235,7 @@
     </section>
 
     <!-- Fit Targets -->
-    <section>
+    <section class="fit-targets-section">
         <h3>Fit Targets</h3>
         <div class="field">
             <label for="fit-target">Fit target (MiB)</label>
@@ -264,7 +264,7 @@
     </section>
 
     <!-- GPU Devices -->
-    <section>
+    <section class="gpus-section">
         <div class="section-header">
             <h3>GPU Devices</h3>
             {#if params.gpus.length < 4}
@@ -462,14 +462,6 @@
         font-family: var(--mono);
     }
 
-    .value-badge {
-        font-size: 0.85rem;
-        font-family: var(--mono);
-        color: var(--text-primary);
-        min-width: 60px;
-        text-align: right;
-    }
-
     .hint {
         font-size: 0.75rem;
         color: var(--text-muted);
@@ -565,5 +557,27 @@
     .host-memory-section {
         flex-grow: 0;
         min-height: 0;
+        border-left: 1px solid var(--border);
+        padding-left: 16px;
+    }
+
+    .fit-targets-section {
+        border-left: 1px solid var(--border);
+        padding-left: 16px;
+    }
+
+    .gpus-section {
+        min-width: 450px;
+    }
+
+    @media (max-width: 980px) {
+        .host-memory-section {
+            padding-right: 0;
+        }
+
+        .fit-targets-section {
+            border-left: none;
+            padding-left: 0;
+        }
     }
 </style>

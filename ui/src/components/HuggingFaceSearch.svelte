@@ -592,7 +592,7 @@
             onclick={validateSelectedFile}
             disabled={validating || resolvingUrl || repoQuery.trim().length === 0 || selectedFile.length === 0}
         >
-            {validating ? 'Validating...' : 'Validate Selected File'}
+            {validating ? 'Validating...' : 'Retrieve Tensor Info'}
         </button>
         {#if resolvingUrl}
             <span class="status">Resolving final file URL...</span>
