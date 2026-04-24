@@ -18,6 +18,33 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "binary": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "fitTargetMiB": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "targetFreeMiB": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "overrideDeviceFreeMiB": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "overrideDeviceTotalMiB": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "overrideHostFreeMiB": { "type": "integer" },
+        "executeNative": { "type": "boolean" },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "recommended_n_ctx": { "type": "integer" },
         "recommended_n_gpu_layers": { "type": "integer" }
       }

@@ -97,6 +97,56 @@ bool json_bool_or_default(const json & obj, const char * key, bool fallback) {
     return value.get<bool>();
 }
 
+std::string json_string_or_default(const json & obj, const char * key, const char * fallback) {
+    if (!obj.is_object() || !obj.contains(key)) {
+        return fallback;
+    }
+
+    const json & value = obj[key];
+    if (!value.is_string()) {
+        return fallback;
+    }
+
+    return value.get<std::string>();
+}
+
+std::vector<uint64_t> json_u64_array_or_default(const json & obj, const char * key, const std::vector<uint64_t> & fallback) {
+    if (!obj.is_object() || !obj.contains(key)) {
+        return fallback;
+    }
+
+    const json & value = obj[key];
+    if (!value.is_array()) {
+        return fallback;
+    }
+
+    std::vector<uint64_t> out;
+    out.reserve(value.size());
+    for (const auto & item : value) {
+        if (!item.is_number_unsigned() && !item.is_number_integer()) {
+            return fallback;
+        }
+        out.push_back(item.get<uint64_t>());
+    }
+
+    if (out.empty()) {
+        return fallback;
+    }
+
+    return out;
+}
+
+std::string join_u64_csv(const std::vector<uint64_t> & values) {
+    std::string out;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            out.push_back(',');
+        }
+        out += std::to_string(values[i]);
+    }
+    return out;
+}
+
 json tensor_to_json(const vram::gguf_tensor_info & tensor) {
     return {
         {"name", tensor.name},
@@ -192,9 +242,169 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
     }
 
     const json model = parsed.contains("model") ? parsed["model"] : json::object();
+    const json runtime = parsed.contains("runtime") ? parsed["runtime"] : json::object();
+    const json device = parsed.contains("device") ? parsed["device"] : json::object();
+    const json fit = parsed.contains("fit") ? parsed["fit"] : json::object();
+    const std::string mode = parsed.contains("mode") && parsed["mode"].is_string()
+        ? parsed["mode"].get<std::string>()
+        : "metadata";
     const std::string source = model.contains("source") && model["source"].is_string()
         ? model["source"].get<std::string>()
         : "";
+
+    if (mode == "fit") {
+        if (source != "local") {
+            json error = {
+                {"ok", false},
+                {"engine", "vram-cpp"},
+                {"apiVersion", "0.1.0"},
+                {"phase", "phase-4-fit-parity"},
+                {"error", "fit_mode_currently_requires_local_model_source"}
+            };
+            response = error.dump();
+            return response.c_str();
+        }
+
+        if (!model.contains("path") || !model["path"].is_string()) {
+            json error = {
+                {"ok", false},
+                {"phase", "phase-4-fit-parity"},
+                {"error", "model.path_required_for_fit_mode"}
+            };
+            response = error.dump();
+            return response.c_str();
+        }
+
+        const std::string model_path = model["path"].get<std::string>();
+        const std::vector<uint64_t> fit_target_mib = json_u64_array_or_default(device, "fit_target_mib", std::vector<uint64_t>{1024});
+        const std::vector<uint64_t> target_free_mib = json_u64_array_or_default(device, "target_free_mib", std::vector<uint64_t>{});
+        const std::string fit_target_csv = join_u64_csv(fit_target_mib);
+        const std::string target_free_csv = join_u64_csv(target_free_mib);
+
+        std::vector<uint64_t> override_device_free_mib;
+        std::vector<uint64_t> override_device_total_mib;
+        if (device.contains("gpus")) {
+            if (!device["gpus"].is_array()) {
+                json error = {
+                    {"ok", false},
+                    {"phase", "phase-4-fit-parity"},
+                    {"error", "device.gpus_must_be_array_when_present"}
+                };
+                response = error.dump();
+                return response.c_str();
+            }
+
+            for (const auto & gpu : device["gpus"]) {
+                if (!gpu.is_object() || !gpu.contains("free_bytes") || !gpu["free_bytes"].is_number_integer()) {
+                    json error = {
+                        {"ok", false},
+                        {"phase", "phase-4-fit-parity"},
+                        {"error", "device.gpus[].free_bytes_required_for_fit_override"}
+                    };
+                    response = error.dump();
+                    return response.c_str();
+                }
+
+                const uint64_t free_bytes = gpu["free_bytes"].get<uint64_t>();
+                override_device_free_mib.push_back(free_bytes / (1024 * 1024));
+
+                if (gpu.contains("total_bytes") && gpu["total_bytes"].is_number_integer()) {
+                    const uint64_t total_bytes = gpu["total_bytes"].get<uint64_t>();
+                    override_device_total_mib.push_back(total_bytes / (1024 * 1024));
+                }
+            }
+        }
+
+        if (!override_device_total_mib.empty() && override_device_total_mib.size() != override_device_free_mib.size()) {
+            json error = {
+                {"ok", false},
+                {"phase", "phase-4-fit-parity"},
+                {"error", "device.gpus[].total_bytes_must_be_present_for_all_or_none"}
+            };
+            response = error.dump();
+            return response.c_str();
+        }
+
+        const uint64_t override_host_free_mib = json_u64_or_default(device, "host_ram_bytes", 0) / (1024 * 1024);
+
+        std::vector<std::string> args;
+        args.push_back("--model");
+        args.push_back(model_path);
+        args.push_back("--fit-target-mib");
+        args.push_back(fit_target_csv);
+
+        if (!target_free_mib.empty()) {
+            args.push_back("--target-free-mib");
+            args.push_back(target_free_csv);
+        }
+
+        if (!override_device_free_mib.empty()) {
+            args.push_back("--override-device-free-mib");
+            args.push_back(join_u64_csv(override_device_free_mib));
+        }
+
+        if (!override_device_total_mib.empty()) {
+            args.push_back("--override-device-total-mib");
+            args.push_back(join_u64_csv(override_device_total_mib));
+        }
+
+        if (override_host_free_mib > 0) {
+            args.push_back("--override-host-free-mib");
+            args.push_back(std::to_string(override_host_free_mib));
+        }
+
+        const uint64_t fit_ctx_min = json_u64_or_default(fit, "min_ctx", 0);
+        if (fit_ctx_min > 0) {
+            args.push_back("--fit-ctx");
+            args.push_back(std::to_string(fit_ctx_min));
+        }
+
+        const uint64_t n_ctx = json_u64_or_default(runtime, "n_ctx", 0);
+        if (n_ctx > 0) {
+            args.push_back("-c");
+            args.push_back(std::to_string(n_ctx));
+        }
+
+        if (runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()) {
+            args.push_back("--n-gpu-layers");
+            args.push_back(std::to_string(runtime["n_gpu_layers"].get<int64_t>()));
+        }
+
+        const bool show_fit_logs = json_bool_or_default(fit, "show_fit_logs", false);
+        if (show_fit_logs) {
+            args.push_back("--show-fit-logs");
+        }
+
+        const std::string harness_bin = json_string_or_default(fit, "fit_harness_binary", "vram_fit_harness");
+
+        json body = {
+            {"ok", true},
+            {"engine", "vram-cpp"},
+            {"apiVersion", "0.1.0"},
+            {"phase", "phase-4-fit-parity"},
+            {"mode", "fit"},
+            {"fit",
+                {
+                    {"binary", harness_bin},
+                    {"args", args},
+                    {"fitTargetMiB", fit_target_mib},
+                    {"targetFreeMiB", target_free_mib},
+                    {"overrideDeviceFreeMiB", override_device_free_mib},
+                    {"overrideDeviceTotalMiB", override_device_total_mib},
+                    {"overrideHostFreeMiB", override_host_free_mib},
+                    {"executeNative", false},
+                    {"limitations", {
+                        "Predictor API does not shell out to llama-fit executables.",
+                        "Run in-process fit via vram_fit_harness (native) or embedded C++ fit bridge (wasm target integration step).",
+                        "fit_target_mib maps to llama-fit margin-per-device semantics.",
+                        "device.gpus[].free_bytes can override detected device memory for deterministic hardware simulation."
+                    }}
+                }
+            }
+        };
+        response = body.dump();
+        return response.c_str();
+    }
 
     if (source != "local") {
         if (source == "huggingface") {

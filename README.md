@@ -15,6 +15,8 @@ This repository currently contains Phase 0 + early Phase 2 scaffolding:
 - HF URL resolver for direct model-file range requests
 - HF range execution backend (browser fetch in wasm, curl fallback in native)
 - Local predictor API path that progressively parses GGUF prefixes from disk
+- Native in-process llama-fit harness (`vram_fit_harness`) linked against llama/common libraries
+- Vendored llama/common fit patch for explicit device/host memory overrides during fitting
 - Unit tests for parser/range behavior and predictor API integration
 
 ## Build (native dev smoke check)
@@ -48,5 +50,42 @@ Expected artifacts:
 
 ## Next implementation steps
 
-1. Add native `llama-fit-params` parity golden tests for 2-3 full model fixtures
-2. Begin wiring wasm wrapper to llama fit internals
+1. Expand native llama-fit parity golden tests to 2-3 fixtures (Gemma Q8_0 baseline is implemented)
+2. Wire in-process fit bridge directly into predictor API runtime path
+3. Begin wiring wasm wrapper to llama fit internals
+
+## Native Fit Harness
+
+Build harness and llama-common stack:
+
+```bash
+cmake -S . -B build-fit-harness -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_WASM=OFF -DVRAM_BUILD_TESTS=OFF
+cmake --build build-fit-harness --target vram_fit_harness -j 8
+```
+
+Example run:
+
+```bash
+build-fit-harness/vram_fit_harness \
+	--model .fixtures/gemma-3-270m-Q8_0.gguf \
+	--fit-target-mib 512 \
+	--fit-ctx 1024 \
+	-c 4096
+```
+
+Deterministic hardware override example:
+
+```bash
+build-fit-harness/vram_fit_harness \
+	--model .fixtures/gemma-3-270m-Q8_0.gguf \
+	--fit-target-mib 512 \
+	--target-free-mib 2048 \
+	--override-device-free-mib 4096 \
+	--override-device-total-mib 8192 \
+	--override-host-free-mib 32768 \
+	--override-host-total-mib 32768 \
+	--fit-ctx 1024 \
+	-c 4096
+```
+
+The override path is implemented as a vendor patch in `vendor/llama-cpp/common/fit.h` and `vendor/llama-cpp/common/fit.cpp` via `common_fit_params_with_memory_override(...)`. The repo also stores the corresponding rebaseable patch at `patches/llama-fit-memory-override.patch`. The harness and predictor API both target that same patch surface so the real app can reuse the exact override semantics instead of maintaining a harness-only fork.

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(vram_cpp VERSION 0.1.0 LANGUAGES C CXX)
 
+find_package(Threads REQUIRED)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -10,10 +12,33 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(VRAM_BUILD_WASM "Build the WebAssembly predictor target" ON)
 option(VRAM_ENABLE_VENDOR_LLAMA "Configure vendor/llama-cpp as an external subproject" OFF)
 option(VRAM_BUILD_TESTS "Build local unit tests" ON)
+option(VRAM_BUILD_FIT_HARNESS "Build native in-process llama-fit harness (requires vendor llama enabled)" ON)
 
 if(VRAM_ENABLE_VENDOR_LLAMA AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/CMakeLists.txt")
     # Keep llama.cpp available for future linking while avoiding full builds by default.
+    set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build llama common library" FORCE)
     add_subdirectory(vendor/llama-cpp EXCLUDE_FROM_ALL)
+endif()
+
+if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS)
+    add_executable(vram_fit_harness
+        tools/vram_fit_harness.cpp
+    )
+
+    target_include_directories(vram_fit_harness
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/common
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/include
+    )
+
+    target_link_libraries(vram_fit_harness
+        PRIVATE
+            llama-common
+            llama
+            Threads::Threads
+    )
 endif()
 
 add_library(vram_predictor_core STATIC
@@ -103,5 +128,20 @@ if(VRAM_BUILD_TESTS)
         )
 
         add_test(NAME vram_hf_helper_tests COMMAND vram_hf_helper_tests)
+
+        add_executable(vram_llama_fit_parity_tests
+            tests/llama_fit_parity_tests.cpp
+        )
+
+        target_link_libraries(vram_llama_fit_parity_tests
+            PRIVATE
+                vram_predictor_core
+        )
+
+        add_test(NAME vram_llama_fit_parity_tests COMMAND vram_llama_fit_parity_tests)
+
+        if(TARGET vram_fit_harness)
+            add_dependencies(vram_llama_fit_parity_tests vram_fit_harness)
+        endif()
     endif()
 endif()

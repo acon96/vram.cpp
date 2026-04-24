@@ -54,6 +54,16 @@
       "required": ["host_ram_bytes"],
       "properties": {
         "host_ram_bytes": { "type": "integer", "minimum": 0 },
+        "fit_target_mib": {
+          "type": "array",
+          "description": "Per-device llama-fit margin targets in MiB (maps to --fit-target).",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "target_free_mib": {
+          "type": "array",
+          "description": "Per-device desired free memory in MiB after fit adjustments.",
+          "items": { "type": "integer", "minimum": 0 }
+        },
         "gpus": {
           "type": "array",
           "items": {
@@ -62,10 +72,20 @@
             "required": ["id", "free_bytes"],
             "properties": {
               "id": { "type": "string" },
-              "free_bytes": { "type": "integer", "minimum": 0 }
+              "free_bytes": { "type": "integer", "minimum": 0 },
+              "total_bytes": { "type": "integer", "minimum": 0 }
             }
           }
         }
+      }
+    },
+    "fit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fit_harness_binary": { "type": "string" },
+        "min_ctx": { "type": "integer", "minimum": 0 },
+        "show_fit_logs": { "type": "boolean" }
       }
     }
   }

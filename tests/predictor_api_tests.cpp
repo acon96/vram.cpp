@@ -89,11 +89,55 @@ void test_hf_request_planning() {
     assert(contains(body, "\"end\":1023"));
 }
 
+void test_fit_mode_command_planning() {
+    const std::string request =
+        "{"
+        "\"mode\":\"fit\","
+        "\"model\":{\"source\":\"local\",\"path\":\"/tmp/sample.gguf\"},"
+                "\"runtime\":{\"n_ctx\":4096,\"n_gpu_layers\":-1,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+                "\"device\":{"
+                    "\"host_ram_bytes\":34359738368,"
+                    "\"fit_target_mib\":[256,512],"
+                    "\"target_free_mib\":[2048,1024],"
+                    "\"gpus\":["
+                        "{\"id\":\"gpu0\",\"free_bytes\":8589934592,\"total_bytes\":12884901888},"
+                        "{\"id\":\"gpu1\",\"free_bytes\":6442450944,\"total_bytes\":8589934592}"
+                    "]"
+                "},"
+                "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\",\"min_ctx\":1024,\"show_fit_logs\":true}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":true"));
+    assert(contains(body, "\"phase\":\"phase-4-fit-parity\""));
+    assert(contains(body, "\"binary\":\"vram_fit_harness\""));
+    assert(contains(body, "\"args\""));
+    assert(contains(body, "\"executeNative\":false"));
+    assert(contains(body, "--fit-target-mib"));
+    assert(contains(body, "--target-free-mib"));
+    assert(contains(body, "--override-device-free-mib"));
+    assert(contains(body, "--override-device-total-mib"));
+    assert(contains(body, "--override-host-free-mib"));
+    assert(contains(body, "--n-gpu-layers"));
+    assert(contains(body, "--show-fit-logs"));
+    assert(contains(body, "256,512"));
+    assert(contains(body, "2048,1024"));
+    assert(contains(body, "8192,6144"));
+    assert(contains(body, "12288,8192"));
+    assert(contains(body, "\"fitTargetMiB\":[256,512]"));
+    assert(contains(body, "\"targetFreeMiB\":[2048,1024]"));
+    assert(contains(body, "\"overrideDeviceFreeMiB\":[8192,6144]"));
+    assert(contains(body, "\"overrideDeviceTotalMiB\":[12288,8192]"));
+}
+
 } // namespace
 
 int main() {
     test_invalid_json();
     test_local_fixture_parse();
     test_hf_request_planning();
+    test_fit_mode_command_planning();
     return 0;
 }

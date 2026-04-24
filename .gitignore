@@ -1,6 +1,7 @@
 # Build outputs
 build/
-build-wasm/
+build-*/
+.fixtures/
 out/
 cmake-build-*/
 

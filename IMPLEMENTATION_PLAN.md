@@ -19,6 +19,7 @@ This app will enable users to quickly estimate system requirements for running a
 
 - Core fitting algorithm exists in common/fit.cpp and public helper declarations in common/fit.h.
 - common_fit_params already computes projected model/context/compute memory and adjusts n_ctx, n_gpu_layers, tensor split, and tensor buffer overrides.
+- Added local vendor patch surface for deterministic memory simulation via `common_fit_params_with_memory_override(...)`.
 - Memory breakdown relies on llama_get_memory_breakdown from src/llama-ext.h (currently C++ extension API, not stable C API in include/llama.h).
 
 ### Existing parameter surface needed by UI
@@ -222,6 +223,11 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 4. [x] Add first golden fixture tests for GGUF metadata parsing on 3 vendored GGUF files.
 5. [x] Connect local GGUF prefix parser flow to `vram_predictor_predict_json` with progressive prefix attempts.
 6. [ ] Add native `llama-fit-params` parity golden tests for 2-3 full model GGUF fixtures. Use ggml-org/gemma-3-270m-GGUF because it has a Q8_0 quant that is only ~200mb
+  - [x] Added custom in-process harness (`vram_fit_harness`) that links llama/common code directly.
+  - [x] Added optional parity test comparing harness + llama-fit-params outputs when fixture/binaries are provided via env vars.
+  - [x] Executed first real fixture parity run on `gemma-3-270m-Q8_0.gguf`.
+  - [x] Added reusable llama/common patch for overriding detected device/host free memory during fit.
+  - [ ] Add 1-2 additional full-model fixtures to complete this item.
 7. [x] Build HF URL resolution + progressive byte-range request planning helper and wire it to `model.source = huggingface` request handling.
 8. [x] Execute remote HF range fetch loop and feed downloaded prefixes into parser.
 
@@ -238,3 +244,6 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Added HF file URL resolver and progressive range request planner with helper tests, plus API support for Hugging Face request planning output.
 - 2026-04-23: Validated first Emscripten build (`vram_predictor_wasm.js/.wasm`) and added a dedicated setup guide for emsdk activation and wasm build commands.
 - 2026-04-23: Implemented platform-aware HF range execution backend (Emscripten fetch in browser/WASM, curl fallback in native) and fed fetched prefixes directly into the GGUF parser.
+- 2026-04-23: Replaced executable-driven fit orchestration in predictor API with harness planning semantics and added a native in-process fit harness (`vram_fit_harness`) linked to llama/common code.
+- 2026-04-23: Built and ran first native parity comparison using `gemma-3-270m-Q8_0.gguf` against `llama-fit-params`.
+- 2026-04-23: Added a maintainable vendor patch to llama/common fit APIs so predictor requests and the native harness can override detected host/device memory for deterministic hardware targeting.
