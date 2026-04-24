@@ -27,10 +27,18 @@ ctest --test-dir build --output-on-failure
 
 ## Build (Emscripten)
 
+In each shell session, load emsdk first:
+
+```bash
+source ~/emsdk/emsdk_env.sh
+```
+
 ```bash
 emcmake cmake -S . -B build-wasm -DVRAM_ENABLE_VENDOR_LLAMA=OFF
 cmake --build build-wasm
 ```
+
+Detailed setup and troubleshooting: `docs/EMSCRIPTEN_SETUP.md`.
 
 Expected artifacts:
 
