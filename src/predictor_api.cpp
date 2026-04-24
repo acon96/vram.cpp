@@ -181,6 +181,18 @@ json parse_status_to_json(vram::gguf_prefix_parse_status status) {
     }
 }
 
+json fit_memory_entry_to_json(const vram::fit_memory_breakdown_entry & entry) {
+    return {
+        {"name", entry.name},
+        {"totalMiB", entry.total_mib},
+        {"freeMiB", entry.free_mib},
+        {"modelMiB", entry.model_mib},
+        {"contextMiB", entry.context_mib},
+        {"computeMiB", entry.compute_mib},
+        {"unaccountedMiB", entry.unaccounted_mib},
+    };
+}
+
 } // namespace
 
 extern "C" const char * vram_predictor_get_system_info_json(void) {
@@ -419,6 +431,14 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 {"apiVersion", "0.1.0"},
                 {"phase", "phase-4-fit-parity"},
                 {"mode", "fit"},
+                {"memory",
+                    {
+                        {"weights_bytes", (exec_result.totals.model_mib * 1024ULL * 1024ULL)},
+                        {"kv_cache_bytes", (exec_result.totals.context_mib * 1024ULL * 1024ULL)},
+                        {"device_bytes", ((exec_result.totals.model_mib + exec_result.totals.context_mib + exec_result.totals.compute_mib) * 1024ULL * 1024ULL)},
+                        {"host_bytes", ((exec_result.host.model_mib + exec_result.host.context_mib + exec_result.host.compute_mib) * 1024ULL * 1024ULL)}
+                    }
+                },
                 {"fit",
                     {
                         {"executedInProcess", true},
@@ -433,9 +453,28 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                         {"recommended_n_gpu_layers", exec_result.n_gpu_layers},
                         {"status", exec_result.status},
                         {"warnings", exec_result.warnings},
+                        {"memoryBreakdown",
+                            {
+                                {"totals",
+                                    {
+                                        {"modelMiB", exec_result.totals.model_mib},
+                                        {"contextMiB", exec_result.totals.context_mib},
+                                        {"computeMiB", exec_result.totals.compute_mib}
+                                    }
+                                },
+                                {"devices", [&]() {
+                                    json devices = json::array();
+                                    for (const auto & entry : exec_result.devices) {
+                                        devices.push_back(fit_memory_entry_to_json(entry));
+                                    }
+                                    return devices;
+                                }()},
+                                {"host", fit_memory_entry_to_json(exec_result.host)}
+                            }
+                        },
                         {"limitations", {
                             "Fit request executed in-process through the vendored llama/common patch surface.",
-                            "Current execution response returns fitted parameters first; detailed memory breakdown is the next wiring step."
+                            "Reported breakdown reflects a fitted context instantiated in the current runtime after applying override-mode fit parameters."
                         }}
                     }
                 }

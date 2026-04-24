@@ -44,6 +44,15 @@ void test_fit_mode_executes_in_process_with_overrides() {
     assert(contains(body, "\"overrideHostFreeMiB\":32768"));
     assert(contains(body, "\"recommended_n_ctx\":4096"));
     assert(contains(body, "\"recommended_n_gpu_layers\":-1"));
+    assert(contains(body, "\"memoryBreakdown\""));
+    assert(contains(body, "\"devices\":[{"));
+    assert(contains(body, "\"host\":{\"name\":\"Host\""));
+    assert(contains(body, "\"totals\":{\"modelMiB\":"));
+    assert(contains(body, "\"modelMiB\":"));
+    assert(contains(body, "\"contextMiB\":"));
+    assert(contains(body, "\"computeMiB\":"));
+    assert(contains(body, "\"weights_bytes\":"));
+    assert(contains(body, "\"kv_cache_bytes\":"));
 }
 
 } // namespace

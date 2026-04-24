@@ -18,6 +18,7 @@ This repository currently contains Phase 0 + early Phase 2 scaffolding:
 - Native in-process llama-fit harness (`vram_fit_harness`) linked against llama/common libraries
 - Vendored llama/common fit patch for explicit device/host memory overrides during fitting
 - Predictor API fit execution path behind explicit `fit.execute_in_process` opt-in when built with vendor llama support
+- In-process fit responses now include detailed device/host model, context, and compute breakdowns
 - Unit tests for parser/range behavior and predictor API integration
 
 ## Build (native dev smoke check)
@@ -114,3 +115,5 @@ Predictor API fit execution example:
 	"fit": {"min_ctx": 1024, "execute_in_process": true}
 }
 ```
+
+In-process fit responses include a `fit.memoryBreakdown` object with per-device and host `modelMiB`, `contextMiB`, and `computeMiB` values, plus a top-level `memory` summary for byte-oriented consumers.

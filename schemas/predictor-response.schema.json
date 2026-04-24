@@ -43,6 +43,50 @@
         "overrideHostFreeMiB": { "type": "integer" },
         "executeNative": { "type": "boolean" },
         "status": { "type": "integer" },
+        "memoryBreakdown": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "totals": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "modelMiB": { "type": "integer" },
+                "contextMiB": { "type": "integer" },
+                "computeMiB": { "type": "integer" }
+              }
+            },
+            "devices": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": { "type": "string" },
+                  "totalMiB": { "type": "integer" },
+                  "freeMiB": { "type": "integer" },
+                  "modelMiB": { "type": "integer" },
+                  "contextMiB": { "type": "integer" },
+                  "computeMiB": { "type": "integer" },
+                  "unaccountedMiB": { "type": "integer" }
+                }
+              }
+            },
+            "host": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "totalMiB": { "type": "integer" },
+                "freeMiB": { "type": "integer" },
+                "modelMiB": { "type": "integer" },
+                "contextMiB": { "type": "integer" },
+                "computeMiB": { "type": "integer" },
+                "unaccountedMiB": { "type": "integer" }
+              }
+            }
+          }
+        },
         "limitations": {
           "type": "array",
           "items": { "type": "string" }

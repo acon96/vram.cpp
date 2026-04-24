@@ -7,6 +7,22 @@
 
 namespace vram {
 
+struct fit_memory_breakdown_entry {
+    std::string name;
+    uint64_t total_mib = 0;
+    uint64_t free_mib = 0;
+    uint64_t model_mib = 0;
+    uint64_t context_mib = 0;
+    uint64_t compute_mib = 0;
+    uint64_t unaccounted_mib = 0;
+};
+
+struct fit_memory_breakdown_totals {
+    uint64_t model_mib = 0;
+    uint64_t context_mib = 0;
+    uint64_t compute_mib = 0;
+};
+
 struct fit_execution_request {
     std::string model_path;
     std::vector<uint64_t> fit_target_mib;
@@ -36,6 +52,9 @@ struct fit_execution_result {
     bool host_override_enabled = false;
     uint64_t host_free_mib = 0;
     uint64_t host_total_mib = 0;
+    fit_memory_breakdown_totals totals;
+    std::vector<fit_memory_breakdown_entry> devices;
+    fit_memory_breakdown_entry host;
 };
 
 bool fit_execution_available();

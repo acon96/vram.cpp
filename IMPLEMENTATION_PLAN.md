@@ -234,6 +234,12 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Add a reusable internal fit execution helper linked from predictor core when vendor llama/common is enabled.
   - [x] Execute fit requests in-process from `vram_predictor_predict_json` with explicit device/host memory overrides.
   - [x] Validate the execution path in a vendor-enabled native build and carry the same surface into a vendor-enabled wasm build.
+10. [x] Return detailed model/context/compute memory breakdowns from the in-process API path instead of fitted parameters only.
+11. Add a JS-side wasm integration flow that mounts model bytes and calls `fit.execute_in_process`.
+12. Put together a simple html UI page that can exercise the wasm predictor API with local file and HF URL inputs and display the output breakdowns and fit recommendations.
+13. Add more fixtures and edge cases to the test suite, including split GGUF models, metadata-only files, and heterogeneous systems.
+14. Build a proper UI with a basic UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
+15. Set up github actions to build and deploy the app to a GitHub Pages site to grab any new llama.cpp model architectures (run nightly)
 
 ## 10. Change Log
 
@@ -252,4 +258,5 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Built and ran first native parity comparison using `gemma-3-270m-Q8_0.gguf` against `llama-fit-params`.
 - 2026-04-23: Added a maintainable vendor patch to llama/common fit APIs so predictor requests and the native harness can override detected host/device memory for deterministic hardware targeting.
 - 2026-04-23: Began replacing fit-mode planning-only API responses with in-process execution wiring so the exported predictor API can directly consume the override-capable llama/common path.
+- 2026-04-23: Added post-fit model/context instantiation inside the in-process API executor so fit responses now include detailed device and host model/context/compute breakdowns in both vendor-native and vendor-wasm builds.
 - 2026-04-23: Added explicit `fit.execute_in_process` API execution, validated it in a vendor-enabled native test path, and produced a successful vendor-enabled Emscripten build after aligning the predictor target with llama.cpp's wasm64 configuration.
