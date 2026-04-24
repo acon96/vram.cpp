@@ -19,6 +19,7 @@ This repository currently contains Phase 0 + early Phase 2 scaffolding:
 - Vendored llama/common fit patch for explicit device/host memory overrides during fitting
 - Predictor API fit execution path behind explicit `fit.execute_in_process` opt-in when built with vendor llama support
 - In-process fit responses now include detailed device/host model, context, and compute breakdowns
+- Browser-side wasm helper for mounting local files and calling `fit.execute_in_process`
 - Unit tests for parser/range behavior and predictor API integration
 
 ## Build (native dev smoke check)
@@ -61,7 +62,7 @@ Expected artifacts:
 
 1. Expand native llama-fit parity golden tests to 2-3 fixtures (Gemma Q8_0 baseline is implemented)
 2. Return detailed model/context/compute breakdowns from the in-process fit API path
-3. Build a JS-side wasm integration flow that mounts model bytes and calls `fit.execute_in_process`
+3. Put together a simple html UI page that exercises the mounted-file wasm flow end to end
 
 ## Native Fit Harness
 
@@ -117,3 +118,30 @@ Predictor API fit execution example:
 ```
 
 In-process fit responses include a `fit.memoryBreakdown` object with per-device and host `modelMiB`, `contextMiB`, and `computeMiB` values, plus a top-level `memory` summary for byte-oriented consumers.
+
+Browser-side mounted-file helper:
+
+```js
+import createVRAMPredictorModule from '../build-wasm-vendor/vram_predictor_wasm.js';
+import { createBrowserPredictorClient } from '../web/vram_predictor_browser.js';
+
+const client = await createBrowserPredictorClient({
+	moduleFactory: createVRAMPredictorModule,
+	moduleOptions: {
+		locateFile: (path) => `../build-wasm-vendor/${path}`,
+	},
+});
+
+const modelPath = await client.mountBrowserFile(fileInput.files[0]);
+const result = client.predictMountedFit({
+	modelPath,
+	hostRamBytes: 32 * 1024 * 1024 * 1024,
+	fitTargetMiB: [512],
+	targetFreeMiB: [2048],
+	gpus: [{ id: 'gpu0', free_bytes: 4 * 1024 * 1024 * 1024, total_bytes: 8 * 1024 * 1024 * 1024 }],
+	nCtx: 4096,
+	minCtx: 1024,
+});
+```
+
+The helper lives at `web/vram_predictor_browser.js` and assumes a vendor-enabled wasm build so the mounted file can be passed directly into the in-process fit path.

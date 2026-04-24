@@ -108,7 +108,7 @@ if(EMSCRIPTEN AND VRAM_BUILD_WASM)
         "-sMODULARIZE=1"
         "-sEXPORT_NAME=createVRAMPredictorModule"
         "-sEXPORTED_FUNCTIONS=['_malloc','_free','_vram_predictor_get_system_info_json','_vram_predictor_predict_json']"
-        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
+        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS']"
     )
 else()
     add_executable(vram_predictor_dev
