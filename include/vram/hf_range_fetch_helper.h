@@ -1,0 +1,35 @@
+#ifndef VRAM_HF_RANGE_FETCH_HELPER_H
+#define VRAM_HF_RANGE_FETCH_HELPER_H
+
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace vram {
+
+struct hf_model_location {
+    std::string repo;
+    std::string file;
+    std::string revision;
+};
+
+struct hf_range_request {
+    std::string url;
+    uint64_t start = 0;
+    uint64_t end = 0;
+    std::vector<std::pair<std::string, std::string>> headers;
+};
+
+std::string resolve_hf_file_url(const hf_model_location & location);
+
+std::vector<hf_range_request> build_hf_prefix_range_requests(
+    const hf_model_location & location,
+    uint64_t initial_bytes,
+    uint64_t max_bytes,
+    double growth_factor,
+    const std::string & bearer_token = "");
+
+} // namespace vram
+
+#endif

@@ -1,6 +1,7 @@
 #include "vram/predictor_api.h"
 
 #include "vram/gguf_prefix_parser.h"
+#include "vram/hf_range_fetch_helper.h"
 #include "vram/hf_range_plan.h"
 
 #include <nlohmann/json.hpp>
@@ -92,6 +93,17 @@ json tensor_to_json(const vram::gguf_tensor_info & tensor) {
     };
 }
 
+json headers_to_json(const std::vector<std::pair<std::string, std::string>> & headers) {
+    json out = json::array();
+    for (const auto & kv : headers) {
+        out.push_back({
+            {"name", kv.first},
+            {"value", kv.second},
+        });
+    }
+    return out;
+}
+
 json parse_status_to_json(vram::gguf_prefix_parse_status status) {
     switch (status) {
         case vram::gguf_prefix_parse_status::complete:
@@ -172,13 +184,76 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         : "";
 
     if (source != "local") {
+        if (source == "huggingface") {
+            if (!model.contains("huggingFace") || !model["huggingFace"].is_object()) {
+                json error = {
+                    {"ok", false},
+                    {"phase", "phase-2-prefix-parser"},
+                    {"error", "model.huggingFace_required_for_huggingface_source"}
+                };
+                response = error.dump();
+                return response.c_str();
+            }
+
+            const json hf = model["huggingFace"];
+            const std::string repo = hf.contains("repo") && hf["repo"].is_string() ? hf["repo"].get<std::string>() : "";
+            const std::string file = hf.contains("file") && hf["file"].is_string() ? hf["file"].get<std::string>() : "";
+            const std::string revision = hf.contains("revision") && hf["revision"].is_string() ? hf["revision"].get<std::string>() : "";
+            const std::string token = hf.contains("token") && hf["token"].is_string() ? hf["token"].get<std::string>() : "";
+
+            vram::hf_model_location loc;
+            loc.repo = repo;
+            loc.file = file;
+            loc.revision = revision;
+
+            const std::string url = vram::resolve_hf_file_url(loc);
+            if (url.empty()) {
+                json error = {
+                    {"ok", false},
+                    {"phase", "phase-2-prefix-parser"},
+                    {"error", "invalid_huggingface_model_descriptor"}
+                };
+                response = error.dump();
+                return response.c_str();
+            }
+
+            const json fetch = parsed.contains("fetch") ? parsed["fetch"] : json::object();
+            const uint64_t initial_bytes = json_u64_or_default(fetch, "initial_bytes", k_default_initial_prefix_bytes);
+            const uint64_t max_bytes = json_u64_or_default(fetch, "max_bytes", k_default_max_prefix_bytes);
+            const double growth_factor = json_double_or_default(fetch, "growth_factor", 2.0);
+
+            const auto requests = vram::build_hf_prefix_range_requests(loc, initial_bytes, max_bytes, growth_factor, token);
+            json planned = json::array();
+            for (const auto & req : requests) {
+                planned.push_back({
+                    {"url", req.url},
+                    {"start", req.start},
+                    {"end", req.end},
+                    {"headers", headers_to_json(req.headers)},
+                });
+            }
+
+            json body = {
+                {"ok", true},
+                {"engine", "vram-cpp"},
+                {"apiVersion", "0.1.0"},
+                {"phase", "phase-2-prefix-parser"},
+                {"source", "huggingface"},
+                {"resolvedUrl", url},
+                {"plannedRequests", planned},
+                {"message", "HF range request planning is ready; network fetch execution is next."}
+            };
+            response = body.dump();
+            return response.c_str();
+        }
+
         json body = {
-            {"ok", true},
+            {"ok", false},
             {"engine", "vram-cpp"},
             {"apiVersion", "0.1.0"},
             {"phase", "phase-2-prefix-parser"},
-            {"message", "Only local GGUF parsing is implemented right now."},
-            {"supportedSources", {"local"}}
+            {"error", "unsupported_model_source"},
+            {"supportedSources", {"local", "huggingface"}}
         };
         response = body.dump();
         return response.c_str();

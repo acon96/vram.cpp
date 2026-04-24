@@ -61,10 +61,39 @@ void test_local_fixture_parse() {
     assert(contains(body, "\"tensorCount\":0"));
 }
 
+void test_hf_request_planning() {
+    const std::string request =
+        "{"
+        "\"mode\":\"metadata\","
+        "\"model\":{"
+            "\"source\":\"huggingface\"," 
+            "\"huggingFace\":{"
+                "\"repo\":\"Qwen/Qwen2.5-0.5B-Instruct-GGUF\"," 
+                "\"file\":\"qwen2.5-0.5b-instruct-q4_k_m.gguf\"," 
+                "\"revision\":\"main\""
+            "}"
+        "},"
+        "\"runtime\":{\"n_ctx\":1024,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{\"host_ram_bytes\":34359738368},"
+        "\"fetch\":{\"initial_bytes\":1024,\"max_bytes\":4096,\"growth_factor\":2.0}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":true"));
+    assert(contains(body, "\"source\":\"huggingface\""));
+    assert(contains(body, "\"resolvedUrl\":\"https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf\""));
+    assert(contains(body, "\"plannedRequests\""));
+    assert(contains(body, "\"start\":0"));
+    assert(contains(body, "\"end\":1023"));
+}
+
 } // namespace
 
 int main() {
     test_invalid_json();
     test_local_fixture_parse();
+    test_hf_request_planning();
     return 0;
 }

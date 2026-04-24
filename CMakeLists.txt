@@ -20,6 +20,7 @@ add_library(vram_predictor_core STATIC
     src/predictor_api.cpp
     src/gguf_prefix_parser.cpp
     src/hf_range_plan.cpp
+    src/hf_range_fetch_helper.cpp
 )
 
 target_include_directories(vram_predictor_core
@@ -90,5 +91,16 @@ if(VRAM_BUILD_TESTS)
         )
 
         add_test(NAME vram_api_tests COMMAND vram_api_tests)
+
+        add_executable(vram_hf_helper_tests
+            tests/hf_range_fetch_helper_tests.cpp
+        )
+
+        target_link_libraries(vram_hf_helper_tests
+            PRIVATE
+                vram_predictor_core
+        )
+
+        add_test(NAME vram_hf_helper_tests COMMAND vram_hf_helper_tests)
     endif()
 endif()

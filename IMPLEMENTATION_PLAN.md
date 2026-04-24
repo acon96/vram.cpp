@@ -222,6 +222,8 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 4. [x] Add first golden fixture tests for GGUF metadata parsing on 3 vendored GGUF files.
 5. [x] Connect local GGUF prefix parser flow to `vram_predictor_predict_json` with progressive prefix attempts.
 6. [ ] Add native `llama-fit-params` parity golden tests for 2-3 full model GGUF fixtures.
+7. [x] Build HF URL resolution + progressive byte-range request planning helper and wire it to `model.source = huggingface` request handling.
+8. [ ] Execute remote HF range fetch loop and feed downloaded prefixes into parser.
 
 ## 10. Change Log
 
@@ -233,3 +235,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Implemented GGUF prefix metadata parser and HF prefix range planning helper with parser unit tests.
 - 2026-04-23: Added golden regression tests using 3 vendored GGUF fixtures and split native fit parity testing into an explicit follow-up step requiring full model fixtures.
 - 2026-04-23: Integrated local GGUF prefix parsing into predictor API requests and added API-level integration tests.
+- 2026-04-23: Added HF file URL resolver and progressive range request planner with helper tests, plus API support for Hugging Face request planning output.
