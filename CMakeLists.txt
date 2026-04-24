@@ -79,5 +79,16 @@ if(VRAM_BUILD_TESTS)
         )
 
         add_test(NAME vram_parser_tests COMMAND vram_parser_tests)
+
+        add_executable(vram_api_tests
+            tests/predictor_api_tests.cpp
+        )
+
+        target_link_libraries(vram_api_tests
+            PRIVATE
+                vram_predictor_core
+        )
+
+        add_test(NAME vram_api_tests COMMAND vram_api_tests)
     endif()
 endif()

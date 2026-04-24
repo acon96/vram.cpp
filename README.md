@@ -12,7 +12,8 @@ This repository currently contains Phase 0 + early Phase 2 scaffolding:
 - Submodule vendoring for llama.cpp in `vendor/llama-cpp`
 - GGUF prefix parser prototype for partial metadata extraction
 - HF progressive prefix range planning helper
-- Unit tests for parser/range behavior
+- Local predictor API path that progressively parses GGUF prefixes from disk
+- Unit tests for parser/range behavior and predictor API integration
 
 ## Build (native dev smoke check)
 
@@ -37,7 +38,6 @@ Expected artifacts:
 
 ## Next implementation steps
 
-1. Connect GGUF prefix parser to predictor request flow
-2. Add native `llama-fit-params` parity golden tests for 2-3 full model fixtures
-3. Build byte-range HTTP fetch helper over resolved HF URLs
-4. Begin wiring wasm wrapper to llama fit internals
+1. Add native `llama-fit-params` parity golden tests for 2-3 full model fixtures
+2. Build byte-range HTTP fetch helper over resolved HF URLs
+3. Begin wiring wasm wrapper to llama fit internals
