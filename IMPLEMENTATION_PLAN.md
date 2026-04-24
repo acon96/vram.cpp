@@ -258,9 +258,11 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Implemented `ResultsTable.svelte` — recommended n_ctx/GPU-layers chips, per-device memory breakdown table (model / KV cache / compute / total / capacity) with usage progress bars and colour-coded thresholds.
   - [x] Wired all components in `App.svelte` with a two-column layout (config sidebar + results panel), async WASM loading via `initPredictor`, loading/error state display, and `predictMountedFit` integration.
   - [x] Added `lib/predictor.js` — lazy WASM initialisation helper (loads script tag, dynamic-imports browser helper, caches client promise).
+  - [x] Added `lib/predictor_fit_worker.js` and `lib/predictor_worker_client.js` to execute fit prediction in a dedicated web worker, preventing long-running synchronous wasm calls from blocking the main UI thread.
   - [x] Added `lib/format.js` — MiB/GiB/byte conversion and display helpers.
   - [x] Verified production build (`npm run build` in `ui/`) produces clean output with no errors.
   - [x] Wired `VITE_WASM_BASE_URL` to accept full asset URLs (cross-port local dev) or relative paths (static hosting), and added a dedicated local assets server script that serves wasm/helper files in place without copy steps.
+  - [x] Hardened `n_gpu_layers` UI handling so `-1` is preserved as "all layers on GPU" instead of drifting through invalid intermediate numeric states.
 16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 17. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
   - [x] Added a new simulated backend module (`cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`) that exposes profile-aware fake ggml GPU devices (CUDA/Metal/Vulkan/Generic) with configurable free/total memory and null-terminated `ggml_backend_dev_t *` wiring for `llama_model_params.devices`.
@@ -268,6 +270,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Threaded optional per-device backend profile selection through API request parsing (`device.gpus[].backend`) and validated it in predictor API tests.
   - [x] Stabilized wasm in-process fit breakdown collection by using no-allocation model/context setup and falling back to non-fatal summary rows when detailed breakdown collection fails.
   - [x] Refined simulated device memory accounting so `ggml_backend_dev_memory` reports post-allocation free bytes (reducing negative/unbounded unaccounted memory artifacts in debug tables).
+  - [x] Corrected `target_free_mib` to fit-margin conversion so large simulated free-memory values do not inflate margin requirements and force unexpected host placement.
   - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel.
 
 ## 10. Change Log
@@ -304,3 +307,6 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-24: Added backend-profile request parsing (`device.gpus[].backend`), updated API docs/AGENTS references, and expanded predictor API tests for valid/invalid backend profile handling.
 - 2026-04-24: Fixed wasm fit post-pass breakdown failures by switching breakdown collection to no-allocation model/context setup and adding graceful fallback warnings instead of hard API failure when breakdown collection cannot initialize.
 - 2026-04-24: Updated simulated backend memory reporting to subtract live simulated allocations from free bytes, preventing large unsigned underflow artifacts in debug unaccounted-memory output.
+- 2026-04-24: Moved browser fit execution onto a dedicated worker path (`predictor_fit_worker`) so long fit runs no longer execute on the main UI thread.
+- 2026-04-24: Fixed fit margin derivation for `target_free_mib` by basing margins on desired free memory plus base headroom, preventing large simulated GPUs from being effectively treated as "must stay almost entirely free".
+- 2026-04-24: Updated `n_gpu_layers` input parsing in the Svelte parameter panel to reliably preserve `-1` and clamp invalid values.

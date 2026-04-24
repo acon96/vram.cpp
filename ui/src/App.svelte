@@ -2,7 +2,7 @@
     import FileUpload from './components/FileUpload.svelte';
     import ParamPanel from './components/ParamPanel.svelte';
     import ResultsTable from './components/ResultsTable.svelte';
-    import { initPredictor } from './lib/predictor.js';
+    import { initPredictorWorker } from './lib/predictor_worker_client.js';
     import { giBToBytes } from './lib/format.js';
 
     // ── WASM paths ────────────────────────────────────────────────────────────
@@ -11,8 +11,6 @@
     const configuredWasmBase = import.meta.env.VITE_WASM_BASE_URL ?? './wasm/';
     const wasmBaseUrl = new URL(configuredWasmBase, window.location.href);
     const wasmJsUrl = new URL('vram_predictor_wasm.js', wasmBaseUrl).toString();
-    const browserHelperUrl = new URL('vram_predictor_browser.js', wasmBaseUrl).toString();
-
     const wasmDebugEnabled = import.meta.env.VITE_DEBUG_WASM === '1' || import.meta.env.DEV;
     const wasmFitLogsEnabled = import.meta.env.VITE_DEBUG_WASM_FIT_LOGS === '1';
     globalThis.__VRAM_DEBUG__ = wasmDebugEnabled;
@@ -45,7 +43,6 @@
         wasmFitLogsEnabled,
         configuredWasmBase,
         wasmJsUrl,
-        browserHelperUrl,
     });
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -57,7 +54,7 @@
         nUbatch: 512,
         cacheTypeK: 'f16',
         cacheTypeV: 'f16',
-        nGpuLayers: 0,
+        nGpuLayers: -1,
         hostRamGiB: 32,
         gpus: [],
         fitTargetMiB: 512,
@@ -99,15 +96,17 @@
 
         let client;
         try {
-            debugLog('runPrediction.initPredictor.start', {
+            debugLog('runPrediction.initPredictorWorker.start', {
                 wasmJsUrl,
-                browserHelperUrl,
             });
 
-            client = await initPredictor({ wasmJsUrl, browserHelperUrl });
+            client = await initPredictorWorker({
+                wasmJsUrl,
+                debugEnabled: wasmDebugEnabled,
+            });
 
             try {
-                const systemInfo = client.getSystemInfo();
+                const systemInfo = await client.getSystemInfo();
                 debugLog('runPrediction.systemInfo', systemInfo);
             } catch (systemInfoError) {
                 debugError('runPrediction.systemInfo.error', { systemInfoError });
@@ -115,21 +114,12 @@
         } catch (err) {
             status = 'error';
             errorMsg = `Failed to load WASM module: ${err.message}`;
-            debugError('runPrediction.initPredictor.error', { err });
+            debugError('runPrediction.initPredictorWorker.error', { err });
             return;
         }
 
         status = 'running';
         try {
-            const mountStartedAt = performance.now();
-            const virtualPath = await client.mountBrowserFile(selectedFile);
-            const mountElapsedMs = Math.round((performance.now() - mountStartedAt) * 100) / 100;
-
-            debugLog('runPrediction.mount.complete', {
-                virtualPath,
-                mountElapsedMs,
-            });
-
             const gpus = params.gpus.map((g, i) => {
                 const parsedIndex = Number.isFinite(Number(g.index))
                     ? Math.max(0, Math.trunc(Number(g.index)))
@@ -142,6 +132,7 @@
                     id,
                     name: parsedName,
                     index: parsedIndex,
+                    backend: 'cuda',
                     free_bytes: giBToBytes(g.freeGiB),
                     total_bytes: giBToBytes(g.totalGiB),
                 };
@@ -155,7 +146,6 @@
                 : [params.targetFreeMiB];
 
             const predictInput = {
-                modelPath: virtualPath,
                 hostRamBytes: giBToBytes(params.hostRamGiB),
                 fitTargetMiB: fitTargets,
                 targetFreeMiB: freeTargets,
@@ -175,32 +165,8 @@
             debugLog('runPrediction.predictMountedFit.input', predictInput);
 
             const predictStartedAt = performance.now();
-            let res = client.predictMountedFit(predictInput);
+            const res = await client.predictMountedFit(selectedFile, predictInput);
             let predictElapsedMs = Math.round((performance.now() - predictStartedAt) * 100) / 100;
-
-            const hasThreadCtorError = res?.ok === false
-                && typeof res?.error === 'string'
-                && res.error.includes('thread constructor failed: Not supported');
-
-            if (hasThreadCtorError && predictInput.showFitLogs) {
-                debugError('runPrediction.predictMountedFit.threadLoggingRetry', {
-                    firstResponse: res,
-                    retryWithShowFitLogs: false,
-                });
-
-                const retryStartedAt = performance.now();
-                res = client.predictMountedFit({
-                    ...predictInput,
-                    showFitLogs: false,
-                });
-                const retryElapsedMs = Math.round((performance.now() - retryStartedAt) * 100) / 100;
-                predictElapsedMs = Math.round((predictElapsedMs + retryElapsedMs) * 100) / 100;
-
-                debugLog('runPrediction.predictMountedFit.retryOutput', {
-                    retryElapsedMs,
-                    response: res,
-                });
-            }
 
             debugLog('runPrediction.predictMountedFit.output', {
                 predictElapsedMs,
@@ -246,16 +212,6 @@
             } else {
                 status = 'done';
             }
-
-            // Clean up the mounted file from WASM virtual FS
-            try {
-                client.unmountFile(virtualPath);
-            } catch (unmountError) {
-                debugError('runPrediction.unmount.error', {
-                    virtualPath,
-                    unmountError,
-                });
-            }
         } catch (err) {
             status = 'error';
             errorMsg = err.message ?? String(err);
@@ -266,7 +222,7 @@
     const isRunning = $derived(status === 'loading-wasm' || status === 'running');
     const statusLabel = $derived({
         idle: '',
-        'loading-wasm': 'Loading WASM module…',
+        'loading-wasm': 'Preparing WASM worker…',
         running: 'Running fit prediction…',
         done: '',
         error: '',
@@ -292,28 +248,35 @@
                     <h2 class="panel-title">Model</h2>
                     <FileUpload onfile={handleFile} />
                 </section>
-
-                <div class="action-row">
-                    <button
-                        class="run-btn"
-                        type="button"
-                        onclick={runPrediction}
-                        disabled={isRunning || !selectedFile}
-                    >
-                        {#if isRunning}
-                            <span class="spinner" aria-hidden="true"></span>
-                            {statusLabel}
-                        {:else}
-                            ▶ Predict VRAM
-                        {/if}
-                    </button>
-
-                    {#if status === 'error'}
-                        <p class="error-msg">{errorMsg}</p>
-                    {/if}
-                </div>
             </div>
+        </div>
 
+        <!-- Middle: Parameters flowing left-to-right -->
+        <section class="panel-section params-section">
+            <h2 class="panel-title">Parameters</h2>
+            <ParamPanel {params} onchange={handleParamsChange} />
+        </section>
+
+        <section class="results-section">
+            <div class="action-row">
+                <button
+                    class="run-btn"
+                    type="button"
+                    onclick={runPrediction}
+                    disabled={isRunning || !selectedFile}
+                >
+                    {#if isRunning}
+                        <span class="spinner" aria-hidden="true"></span>
+                        {statusLabel}
+                    {:else}
+                        ▶ Predict VRAM
+                    {/if}
+                </button>
+
+                {#if status === 'error'}
+                    <p class="error-msg">{errorMsg}</p>
+                {/if}
+            </div>
             <section class="results-panel">
                 <h2 class="panel-title">
                     Memory Breakdown
@@ -331,12 +294,6 @@
                     <ResultsTable {result} />
                 {/if}
             </section>
-        </div>
-
-        <!-- Bottom: Parameters flowing left-to-right -->
-        <section class="panel-section params-section">
-            <h2 class="panel-title">Parameters</h2>
-            <ParamPanel {params} onchange={handleParamsChange} />
         </section>
     </main>
 
@@ -474,6 +431,7 @@
         display: flex;
         flex-direction: column;
         gap: 10px;
+        padding-bottom: 20px;
     }
 
     .run-btn {

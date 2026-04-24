@@ -103,11 +103,19 @@
         const next = Math.max(1, parseInt(value, 10) || 1);
         update({ nUbatch: Math.min(next, params.nBatch) });
     }
+
+    function onGpuLayersChange(value) {
+        const parsed = parseInt(value, 10);
+        if (Number.isNaN(parsed)) {
+            return;
+        }
+        update({ nGpuLayers: Math.max(-1, parsed) });
+    }
 </script>
 
 <div class="param-panel">
     <!-- Runtime -->
-    <section>
+    <section class="runtime-section">
         <h3>Runtime</h3>
 
         <div class="field">
@@ -176,7 +184,7 @@
                     min="-1"
                     step="1"
                     value={params.nGpuLayers}
-                    oninput={(e) => update({ nGpuLayers: parseInt(e.currentTarget.value) })}
+                    oninput={(e) => onGpuLayersChange(e.currentTarget.value)}
                 />
                 <span class="hint">{params.nGpuLayers === -1 ? 'all layers on GPU' : params.nGpuLayers === 0 ? 'CPU only' : `${params.nGpuLayers} layers`}</span>
             </div>
@@ -211,7 +219,7 @@
     </section>
 
     <!-- Host Memory -->
-    <section>
+    <section class="host-memory-section">
         <h3>Host Memory</h3>
         <div class="field">
             <label for="host-ram">System RAM (GiB)</label>
@@ -226,20 +234,51 @@
         </div>
     </section>
 
+    <!-- Fit Targets -->
+    <section>
+        <h3>Fit Targets</h3>
+        <div class="field">
+            <label for="fit-target">Fit target (MiB)</label>
+            <input
+                id="fit-target"
+                type="number"
+                min="0"
+                step="128"
+                value={params.fitTargetMiB}
+                oninput={(e) => update({ fitTargetMiB: parseInt(e.currentTarget.value) || 0 })}
+            />
+            <span class="field-hint">Margin to keep free per GPU during fit</span>
+        </div>
+        <div class="field">
+            <label for="target-free">Target free (MiB)</label>
+            <input
+                id="target-free"
+                type="number"
+                min="0"
+                step="256"
+                value={params.targetFreeMiB}
+                oninput={(e) => update({ targetFreeMiB: parseInt(e.currentTarget.value) || 0 })}
+            />
+            <span class="field-hint">Desired free memory after fit adjustments</span>
+        </div>
+    </section>
+
     <!-- GPU Devices -->
     <section>
         <div class="section-header">
             <h3>GPU Devices</h3>
             {#if params.gpus.length < 4}
                 <button type="button" class="add-btn" onclick={addGpu}>+ Add GPU</button>
+            {:else}
+                <span class="hint">Maximum of 4 GPUs supported</span>
             {/if}
+            
         </div>
-
+        <div class="gpus-list">
         {#if params.gpus.length === 0}
             <p class="muted">No GPUs — CPU-only mode. <button type="button" class="link-btn" onclick={addGpu}>Add a GPU</button></p>
         {/if}
-
-        {#each params.gpus as gpu, i}
+            {#each params.gpus as gpu, i}
             <div class="gpu-card">
                 <div class="gpu-header">
                     <span class="gpu-label">GPU {i}</span>
@@ -295,45 +334,17 @@
                     </div>
                 </div>
             </div>
-        {/each}
-    </section>
-
-    <!-- Fit Targets -->
-    <section>
-        <h3>Fit Targets</h3>
-        <div class="field-row">
-            <div class="field">
-                <label for="fit-target">Fit target (MiB)</label>
-                <input
-                    id="fit-target"
-                    type="number"
-                    min="0"
-                    step="128"
-                    value={params.fitTargetMiB}
-                    oninput={(e) => update({ fitTargetMiB: parseInt(e.currentTarget.value) || 0 })}
-                />
-                <span class="field-hint">Margin to keep free per GPU during fit</span>
-            </div>
-            <div class="field">
-                <label for="target-free">Target free (MiB)</label>
-                <input
-                    id="target-free"
-                    type="number"
-                    min="0"
-                    step="256"
-                    value={params.targetFreeMiB}
-                    oninput={(e) => update({ targetFreeMiB: parseInt(e.currentTarget.value) || 0 })}
-                />
-                <span class="field-hint">Desired free memory after fit adjustments</span>
-            </div>
+            {/each}
         </div>
     </section>
+
 </div>
 
 <style>
     .param-panel {
         display: flex;
-        flex-direction: row;
+        flex-direction: column;
+        max-height: 60vh;
         flex-wrap: wrap;
         gap: 24px;
         align-items: start;
@@ -345,6 +356,7 @@
         gap: 12px;
         flex: 1;
         min-width: 220px;
+        min-height: 200px;
     }
 
     h3 {
@@ -469,6 +481,15 @@
         margin-top: 2px;
     }
 
+    .gpus-list {
+        display: flex;
+        gap: 12px;
+        flex-direction: column;
+        overflow-y: scroll;
+        max-height: 400px;
+        flex: 1;
+    }
+
     .gpu-card {
         border: 1px solid var(--border);
         border-radius: 8px;
@@ -535,5 +556,14 @@
         font-size: 0.85rem;
         color: var(--text-muted);
         margin: 0;
+    }
+
+    .runtime-section {
+        min-height: 100%;
+    }
+
+    .host-memory-section {
+        flex-grow: 0;
+        min-height: 0;
     }
 </style>

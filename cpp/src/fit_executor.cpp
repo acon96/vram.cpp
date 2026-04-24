@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <exception>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,13 @@ std::string join_u64_csv(const std::vector<uint64_t> & values) {
         out += std::to_string(values[i]);
     }
     return out;
+}
+
+uint64_t saturating_add_u64(uint64_t a, uint64_t b) {
+    if (a > std::numeric_limits<uint64_t>::max() - b) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    return a + b;
 }
 
 #if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
@@ -375,8 +383,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
                 margins_mib[i] = base_margin_mib[i];
                 warnings_target_above_source.push_back(i);
             } else {
-                const uint64_t delta = source_free_mib[i] - desired_free_mib[i];
-                margins_mib[i] = delta + base_margin_mib[i];
+                margins_mib[i] = saturating_add_u64(desired_free_mib[i], base_margin_mib[i]);
             }
         }
     } else if (!simulated_device_free_mib.empty()) {
