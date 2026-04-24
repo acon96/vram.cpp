@@ -262,6 +262,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Verified production build (`npm run build` in `ui/`) produces clean output with no errors.
   - [x] Wired `VITE_WASM_BASE_URL` to accept full asset URLs (cross-port local dev) or relative paths (static hosting), and added a dedicated local assets server script that serves wasm/helper files in place without copy steps.
 16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
+17. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
 
 ## 10. Change Log
 

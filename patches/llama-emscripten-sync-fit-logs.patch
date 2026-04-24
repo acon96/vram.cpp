@@ -1,5 +1,5 @@
 diff --git a/common/fit.cpp b/common/fit.cpp
-index 134854bc1..38ce80553 100644
+index 134854bc1..6285c7ea3 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
 @@ -8,10 +8,35 @@
@@ -38,7 +38,149 @@ index 134854bc1..38ce80553 100644
  // this enum is only used in llama_params_fit_impl but needs to be defined outside of it to fix a Windows compilation issue
  // enum to identify part of a layer for distributing its tensors:
  enum common_layer_fraction_t {
-@@ -845,6 +870,72 @@ enum common_params_fit_status common_fit_params_with_memory_override(
+@@ -72,9 +97,15 @@ static std::vector<llama_device_memory_data> common_get_device_memory_data(
+         throw std::runtime_error("failed to create llama_context from model");
+     }
+ 
+-    const size_t nd = llama_model_n_devices(model);
++    const size_t nd_detected = llama_model_n_devices(model);
++    const bool synthetic_devices =
++        memory_override != nullptr &&
++        nd_detected == 0 &&
++        memory_override->n_devices > 0;
++    const size_t nd = synthetic_devices ? memory_override->n_devices : nd_detected;
++
+     if (memory_override != nullptr) {
+-        if (memory_override->n_devices != nd) {
++        if (!synthetic_devices && memory_override->n_devices != nd) {
+             llama_free(ctx);
+             llama_model_free(model);
+             llama_log_set(ud.original_logger.callback, ud.original_logger.user_data);
+@@ -105,8 +136,8 @@ static std::vector<llama_device_memory_data> common_get_device_memory_data(
+         if (!dev) {
+             continue;
+         }
+-        for (size_t i = 0; i < nd; i++) {
+-            if (dev == llama_model_get_device(model, i)) {
++        for (size_t i = 0; i < nd_detected; i++) {
++            if (dev == llama_model_get_device(model, static_cast<int>(i))) {
+                 ret[i].mb.model   += mb.model;
+                 ret[i].mb.context += mb.context;
+                 ret[i].mb.compute += mb.compute;
+@@ -158,9 +189,110 @@ static std::vector<llama_device_memory_data> common_get_device_memory_data(
+         }
+     }
+ 
++    if (synthetic_devices) {
++        const int64_t model_total = int64_t(ret.back().mb.model);
++        const int64_t context_total = int64_t(ret.back().mb.context);
++        const int64_t compute_total = int64_t(ret.back().mb.compute);
++
++        const uint32_t n_layer_total = llama_model_n_layer(model) + 1;
++        const int32_t n_gpu_layers_raw = mparams->n_gpu_layers;
++        uint32_t n_gpu_layers = n_layer_total;
++        if (n_gpu_layers_raw >= 0) {
++            n_gpu_layers = std::min(uint32_t(n_gpu_layers_raw), n_layer_total);
++        }
++
++        std::vector<int64_t> weights(nd, 1);
++        if (mparams->tensor_split != nullptr) {
++            int64_t weight_sum = 0;
++            for (size_t i = 0; i < nd; ++i) {
++                const float w = mparams->tensor_split[i];
++                if (w > 0.0f) {
++                    const int64_t wi = std::max<int64_t>(1, int64_t(w * 1000.0f));
++                    weights[i] = wi;
++                    weight_sum += wi;
++                } else {
++                    weights[i] = 0;
++                }
++            }
++            if (weight_sum == 0) {
++                std::fill(weights.begin(), weights.end(), 1);
++            }
++        }
++
++        auto split_by_weight = [&](int64_t total, std::vector<int64_t> & out) {
++            out.assign(nd, 0);
++            if (total <= 0 || nd == 0) {
++                return;
++            }
++
++            int64_t weight_sum = 0;
++            for (const int64_t w : weights) {
++                weight_sum += w;
++            }
++            if (weight_sum <= 0) {
++                weight_sum = int64_t(nd);
++            }
++
++            int64_t assigned = 0;
++            for (size_t i = 0; i < nd; ++i) {
++                int64_t wi = weights[i] > 0 ? weights[i] : 1;
++                int64_t part = (total * wi) / weight_sum;
++                out[i] = part;
++                assigned += part;
++            }
++
++            int64_t remainder = total - assigned;
++            for (size_t i = 0; i < nd && remainder > 0; ++i) {
++                out[i] += 1;
++                remainder -= 1;
++            }
++        };
++
++        const int64_t numer = int64_t(n_gpu_layers);
++        const int64_t denom = std::max<int64_t>(1, int64_t(n_layer_total));
++
++        const int64_t gpu_model_total = (model_total * numer) / denom;
++        const int64_t gpu_context_total = (context_total * numer) / denom;
++        const int64_t gpu_compute_total = (compute_total * numer) / denom;
++
++        std::vector<int64_t> model_parts;
++        std::vector<int64_t> context_parts;
++        std::vector<int64_t> compute_parts;
++        split_by_weight(gpu_model_total, model_parts);
++        split_by_weight(gpu_context_total, context_parts);
++        split_by_weight(gpu_compute_total, compute_parts);
++
++        int64_t model_assigned = 0;
++        int64_t context_assigned = 0;
++        int64_t compute_assigned = 0;
++        for (size_t i = 0; i < nd; ++i) {
++            ret[i].mb.model = size_t(std::max<int64_t>(0, model_parts[i]));
++            ret[i].mb.context = size_t(std::max<int64_t>(0, context_parts[i]));
++            ret[i].mb.compute = size_t(std::max<int64_t>(0, compute_parts[i]));
++            model_assigned += int64_t(ret[i].mb.model);
++            context_assigned += int64_t(ret[i].mb.context);
++            compute_assigned += int64_t(ret[i].mb.compute);
++        }
++
++        ret.back().mb.model = size_t(std::max<int64_t>(0, model_total - model_assigned));
++        ret.back().mb.context = size_t(std::max<int64_t>(0, context_total - context_assigned));
++        ret.back().mb.compute = size_t(std::max<int64_t>(0, compute_total - compute_assigned));
++    }
++
+     devs.clear();
+-    for (int i = 0; i < llama_model_n_devices(model); i++) {
+-        devs.push_back(llama_model_get_device(model, i));
++    if (synthetic_devices) {
++        ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
++        if (cpu_dev == nullptr) {
++            llama_free(ctx);
++            llama_model_free(model);
++            llama_log_set(ud.original_logger.callback, ud.original_logger.user_data);
++            throw std::runtime_error("no CPU backend found for synthetic devices");
++        }
++        devs.assign(nd, cpu_dev);
++    } else {
++        for (int i = 0; i < llama_model_n_devices(model); i++) {
++            devs.push_back(llama_model_get_device(model, i));
++        }
+     }
+ 
+     hp_ngl         = llama_model_n_layer(model);
+@@ -845,6 +977,90 @@ enum common_params_fit_status common_fit_params_with_memory_override(
      return status;
  }
  
@@ -75,6 +217,20 @@ index 134854bc1..38ce80553 100644
 +        out.reserve(dmd.size());
 +        device_names.reserve(dmd.size());
 +
++        bool synthetic_name_mode = false;
++        if (memory_override != nullptr && !devs.empty()) {
++            ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
++            if (cpu_dev != nullptr) {
++                synthetic_name_mode = true;
++                for (const auto & dev : devs) {
++                    if (dev != cpu_dev) {
++                        synthetic_name_mode = false;
++                        break;
++                    }
++                }
++            }
++        }
++
 +        for (size_t i = 0; i < devs.size(); ++i) {
 +            common_fit_memory_data row;
 +            row.total = dmd[i].total;
@@ -84,7 +240,11 @@ index 134854bc1..38ce80553 100644
 +            row.compute = dmd[i].mb.compute;
 +            out.push_back(row);
 +
-+            device_names.push_back(std::string(ggml_backend_dev_name(devs[i])) + " (" + ggml_backend_dev_description(devs[i]) + ")");
++            if (synthetic_name_mode) {
++                device_names.push_back("Synthetic GPU " + std::to_string(i));
++            } else {
++                device_names.push_back(std::string(ggml_backend_dev_name(devs[i])) + " (" + ggml_backend_dev_description(devs[i]) + ")");
++            }
 +        }
 +
 +        if (!dmd.empty()) {

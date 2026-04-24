@@ -130,11 +130,22 @@
                 mountElapsedMs,
             });
 
-            const gpus = params.gpus.map((g, i) => ({
-                id: `gpu${i}`,
-                free_bytes: giBToBytes(g.freeGiB),
-                total_bytes: giBToBytes(g.totalGiB),
-            }));
+            const gpus = params.gpus.map((g, i) => {
+                const parsedIndex = Number.isFinite(Number(g.index))
+                    ? Math.max(0, Math.trunc(Number(g.index)))
+                    : i;
+                const parsedName = typeof g.name === 'string' ? g.name.trim() : '';
+                const fallbackId = `gpu${parsedIndex}`;
+                const id = parsedName.length > 0 ? parsedName : fallbackId;
+
+                return {
+                    id,
+                    name: parsedName,
+                    index: parsedIndex,
+                    free_bytes: giBToBytes(g.freeGiB),
+                    total_bytes: giBToBytes(g.totalGiB),
+                };
+            });
 
             const fitTargets = params.gpus.length > 0
                 ? params.gpus.map(() => params.fitTargetMiB)

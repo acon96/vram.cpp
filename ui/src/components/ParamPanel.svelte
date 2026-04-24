@@ -10,7 +10,7 @@
      * @property {string}   cacheTypeV
      * @property {number}   nGpuLayers
      * @property {number}   hostRamGiB
-     * @property {Array<{totalGiB: number, freeGiB: number}>} gpus
+        * @property {Array<{name?: string, index?: number, totalGiB: number, freeGiB: number}>} gpus
      * @property {number}   fitTargetMiB
      * @property {number}   targetFreeMiB
      */
@@ -30,7 +30,16 @@
     }
 
     function addGpu() {
-        onchange({ ...params, gpus: [...params.gpus, { totalGiB: 8, freeGiB: 8 }] });
+        const nextIndex = params.gpus.length;
+        onchange({
+            ...params,
+            gpus: [...params.gpus, {
+                name: `GPU ${nextIndex}`,
+                index: nextIndex,
+                totalGiB: 8,
+                freeGiB: 8,
+            }],
+        });
     }
 
     function removeGpu(index) {
@@ -41,6 +50,17 @@
         const total = parseFloat(value) || 0;
         const gpu = params.gpus[index];
         updateGpu(index, { totalGiB: total, freeGiB: Math.min(gpu.freeGiB, total) });
+    }
+
+    function onGpuNameChange(index, value) {
+        updateGpu(index, { name: value });
+    }
+
+    function onGpuIndexChange(index, value) {
+        const next = parseInt(value, 10);
+        if (!Number.isNaN(next) && next >= 0) {
+            updateGpu(index, { index: next });
+        }
     }
 
     function onBatchChange(value) {
@@ -184,6 +204,30 @@
                     <span class="gpu-label">GPU {i}</span>
                     <button type="button" class="remove-btn" onclick={() => removeGpu(i)} aria-label="Remove GPU {i}">✕</button>
                 </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label for="gpu-name-{i}">Display name</label>
+                        <input
+                            id="gpu-name-{i}"
+                            type="text"
+                            value={gpu.name ?? `GPU ${i}`}
+                            oninput={(e) => onGpuNameChange(i, e.currentTarget.value)}
+                        />
+                    </div>
+                    <div class="field">
+                        <label for="gpu-index-{i}">Device index</label>
+                        <input
+                            id="gpu-index-{i}"
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={gpu.index ?? i}
+                            oninput={(e) => onGpuIndexChange(i, e.currentTarget.value)}
+                        />
+                    </div>
+                </div>
+
                 <div class="field-row">
                     <div class="field">
                         <label for="gpu-total-{i}">Total VRAM (GiB)</label>
@@ -300,6 +344,7 @@
     }
 
     input[type='number'],
+    input[type='text'],
     select {
         width: 100%;
         box-sizing: border-box;

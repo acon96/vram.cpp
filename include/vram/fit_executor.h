@@ -29,6 +29,7 @@ struct fit_execution_request {
     std::vector<uint64_t> target_free_mib;
     std::vector<uint64_t> override_device_free_mib;
     std::vector<uint64_t> override_device_total_mib;
+    std::vector<std::string> override_device_labels;
     bool has_override_host_free_mib = false;
     bool has_override_host_total_mib = false;
     uint64_t override_host_free_mib = 0;

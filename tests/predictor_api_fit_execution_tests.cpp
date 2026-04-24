@@ -79,7 +79,7 @@ void test_fit_mode_executes_in_process_with_overrides() {
               "\"host_ram_bytes\":34359738368,"
               "\"fit_target_mib\":[512],"
               "\"target_free_mib\":[2048],"
-              "\"gpus\":[{\"id\":\"gpu0\",\"free_bytes\":4294967296,\"total_bytes\":8589934592}]"
+                            "\"gpus\":[{\"id\":\"gpu0\",\"name\":\"A100\",\"index\":2,\"free_bytes\":4294967296,\"total_bytes\":8589934592}]"
             "},"
             "\"fit\":{\"min_ctx\":1024,\"execute_in_process\":true}"
             "}";
@@ -94,6 +94,7 @@ void test_fit_mode_executes_in_process_with_overrides() {
         assert(contains(body, "\"recommended\":{\"n_ctx\":4096,\"n_gpu_layers\":-1}"));
         assert(contains(body, "\"breakdown\""));
         assert(contains(body, "\"devices\":[{"));
+        assert(contains(body, "\"name\":\"A100 [index 2]\""));
         assert(contains(body, "\"host\":{\"name\":\"Host\""));
         assert(contains(body, "\"totals\":{\"modelMiB\":"));
         assert(contains(body, "\"modelMiB\":"));

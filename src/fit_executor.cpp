@@ -66,6 +66,7 @@ bool collect_memory_breakdown(
         const llama_model_params & model_params,
         const llama_context_params & context_params,
         const common_fit_memory_override * memory_override,
+    const std::vector<std::string> & override_device_labels,
         fit_execution_result & result,
         std::string & error) {
     llama_model_params adjusted_model_params = model_params;
@@ -116,7 +117,11 @@ bool collect_memory_breakdown(
         const uint64_t unaccounted_b = total_b >= self_b + free_b ? total_b - self_b - free_b : 0;
 
         fit_memory_breakdown_entry entry;
-        entry.name = names[i];
+        if (i < override_device_labels.size() && !override_device_labels[i].empty()) {
+            entry.name = override_device_labels[i];
+        } else {
+            entry.name = names[i];
+        }
         entry.total_mib = bytes_to_mib_floor(total_b);
         entry.free_mib = bytes_to_mib_floor(free_b);
         entry.model_mib = bytes_to_mib_floor(model_b);
@@ -424,7 +429,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     if (result.ok) {
         phase = "collect_memory_breakdown";
         const common_fit_memory_override * breakdown_override = use_memory_override ? &memory_override : nullptr;
-        if (!collect_memory_breakdown(request.model_path, mparams, cparams, breakdown_override, result, error)) {
+        if (!collect_memory_breakdown(request.model_path, mparams, cparams, breakdown_override, request.override_device_labels, result, error)) {
 #if defined(__EMSCRIPTEN__)
             if (request.show_fit_logs) {
                 std::fprintf(stderr,

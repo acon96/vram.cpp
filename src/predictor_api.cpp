@@ -339,6 +339,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
         std::vector<uint64_t> override_device_free_mib;
         std::vector<uint64_t> override_device_total_mib;
+        std::vector<std::string> override_device_labels;
         if (device.contains("gpus")) {
             if (!device["gpus"].is_array()) {
                 json error = {
@@ -361,6 +362,24 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
                 const uint64_t free_bytes = gpu["free_bytes"].get<uint64_t>();
                 override_device_free_mib.push_back(free_bytes / (1024 * 1024));
+
+                std::string label;
+                if (gpu.contains("name") && gpu["name"].is_string()) {
+                    label = gpu["name"].get<std::string>();
+                }
+                if (label.empty() && gpu.contains("id") && gpu["id"].is_string()) {
+                    label = gpu["id"].get<std::string>();
+                }
+                if (label.empty()) {
+                    label = "GPU " + std::to_string(override_device_labels.size());
+                }
+                if (gpu.contains("index") && gpu["index"].is_number_integer()) {
+                    const int64_t gpu_index = gpu["index"].get<int64_t>();
+                    if (gpu_index >= 0) {
+                        label += " [index " + std::to_string(gpu_index) + "]";
+                    }
+                }
+                override_device_labels.push_back(label);
 
                 if (gpu.contains("total_bytes") && gpu["total_bytes"].is_number_integer()) {
                     const uint64_t total_bytes = gpu["total_bytes"].get<uint64_t>();
@@ -451,6 +470,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             exec_request.target_free_mib = target_free_mib;
             exec_request.override_device_free_mib = override_device_free_mib;
             exec_request.override_device_total_mib = override_device_total_mib;
+            exec_request.override_device_labels = override_device_labels;
             exec_request.has_override_host_free_mib = override_host_free_mib > 0;
             exec_request.has_override_host_total_mib = override_host_free_mib > 0;
             exec_request.override_host_free_mib = override_host_free_mib;
