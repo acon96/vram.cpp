@@ -15,6 +15,15 @@ Use links instead of duplicating details:
 
 ## Repository Map
 
+### Root / project control
+- Build configuration and target wiring: `CMakeLists.txt`
+- Repository-specific agent guidance: `AGENTS.md`
+- High-level user/developer docs: `README.md`
+- Implementation progress and decision log: `IMPLEMENTATION_PLAN.md`
+- Vendor sync-log patch maintenance: `patches/llama-emscripten-sync-fit-logs.patch`
+- Third-party source subtree: `vendor/llama-cpp/`
+- Local/generated build outputs: `build*/`, `a.out.js`, `a.out.wasm`
+
 ### C++ (`cpp/`)
 - API bridge: `cpp/src/predictor_api.cpp`, `cpp/include/vram/predictor_api.h`
 - Prefix parser: `cpp/src/gguf_prefix_parser.cpp`, `cpp/include/vram/gguf_prefix_parser.h`
@@ -23,19 +32,42 @@ Use links instead of duplicating details:
 - Simulated ggml backend: `cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`
 - WASM entrypoint: `cpp/src/predictor_wasm_main.cpp`
 - Native fit harness tool: `cpp/tools/vram_fit_harness.cpp`
-- Integration tests: `cpp/tests/`
+- Public headers live under `cpp/include/vram/`
+- Unit/integration coverage lives under `cpp/tests/`
+
+### C++ test surfaces (`cpp/tests/`)
+- Parser coverage: `parser_tests.cpp`
+- Predictor API contract coverage: `predictor_api_tests.cpp`
+- HF helper coverage: `hf_range_fetch_helper_tests.cpp`
+- Optional native llama fit parity coverage: `llama_fit_parity_tests.cpp`
+- Vendor-enabled in-process fit execution coverage: `predictor_api_fit_execution_tests.cpp`
 
 ### Web / Browser interop (`web/`)
 - WASM JS helper: `web/vram_predictor_browser.js`
 - Smoke harness HTML: `web/browser_helper_smoke.html`
 
 ### Frontend (`ui/`)
-- SvelteJS app: `ui/src/`
-- Main app component: `ui/src/App.svelte`
+- Vite + Svelte app root: `ui/src/`
+- Main app shell and view switch: `ui/src/App.svelte`
+- Global frontend styles: `ui/src/app.css`
 - Parameter panel: `ui/src/components/ParamPanel.svelte`
 - File upload: `ui/src/components/FileUpload.svelte`
 - Results table: `ui/src/components/ResultsTable.svelte`
-- WASM predictor wrapper: `ui/src/lib/predictor.js`
+- Raw JSON browser harness: `ui/src/components/JsonHarness.svelte`
+- Worker-side fit execution bridge: `ui/src/lib/predictor_fit_worker.js`
+- Main-thread worker client: `ui/src/lib/predictor_worker_client.js`
+- Shared formatting helpers: `ui/src/lib/format.js`
+- Direct browser predictor wrapper: `ui/src/lib/predictor.js`
+- UI entrypoint: `ui/src/main.js`
+- Local wasm asset server: `ui/scripts/serve-wasm-assets.mjs`
+
+### Semantic runtime flow
+- JSON request entrypoint: `cpp/src/predictor_api.cpp`
+- Shared fit execution path: `cpp/src/fit_executor.cpp`
+- Simulated device injection for deterministic fits: `cpp/src/sim_backend.cpp`
+- Standalone native harness uses the same shared executor path as the API/browser fit path: `cpp/tools/vram_fit_harness.cpp`
+- Browser UI fit requests run through the dedicated worker, not directly on the main thread: `ui/src/lib/predictor_fit_worker.js` + `ui/src/lib/predictor_worker_client.js`
+- Browser raw-request debugging path is exposed at `/?view=harness` via `ui/src/components/JsonHarness.svelte`
 
 ## Build and Test Commands
 Use these first unless a task explicitly needs alternatives.
@@ -68,6 +100,15 @@ emcmake cmake -S . -B build-wasm-vendor -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUI
 cmake --build build-wasm-vendor --target vram_predictor_wasm -j4
 ```
 
+UI dev/build:
+```bash
+cd ui
+npm install
+npm run assets:serve
+npm run dev
+npm run build
+```
+
 ## Test Inputs and Environment
 - Some fit tests are optional and skip unless env vars are set:
   - `VRAM_LLAMA_FIT_MODELS` (comma/semicolon list)
@@ -88,16 +129,20 @@ cmake --build build-wasm-vendor --target vram_predictor_wasm -j4
   - API tests under `cpp/tests/`
   - Browser helper assumptions in `web/vram_predictor_browser.js`
 
-## First Session Notes (2026-04-23)
-Record of repo-specific lessons learned during the first coding session:
-- WASM fit execution can fail if threaded logger paths are used under Emscripten; keep fit logging conservative in browser runs.
+## Recent Repo Notes
+- The old vendor memory-override fit patch has been removed; deterministic fit simulation now goes through `sim_backend` and stock `common_fit_params(...)`.
+- The Emscripten synchronous fit logging patch must be preserved. With browser debug fit logs enabled, the default llama/common logging path can attempt to spawn a thread and crash the non-pthreads wasm build.
+- The native fit harness now uses the same shared `execute_fit_request(...)` path as the in-process predictor API/browser fit flow.
+- The browser raw JSON harness at `/?view=harness` is the fastest way to validate exact request/response behavior against a local GGUF file.
+- WASM fit execution should keep fit logging conservative by default even though the sync-log patch exists.
 - Metadata-only GGUF fixtures may require larger prefix caps; 4 MiB avoided false `insufficient_prefix_bytes` failures for some vocab models.
 - When terminal buffers look stale, trust fresh build/test/browser reruns over old terminal scrollback.
 - `hf_range_plan` was merged into `hf_range_fetch_helper`; keep a single helper surface (no duplicate planning modules).
-- Compact response contract is now validated in native, vendor, and browser wasm paths; preserve this as the baseline for item 15 UI work.
+- Compact response contract is now validated in native, vendor, and browser wasm paths; preserve this as the baseline for UI and API follow-up work.
 
 ## Editing and Commit Practices
 - Keep changes scoped to the current implementation item; do not batch unrelated work.
 - Update plan status/changelog in `IMPLEMENTATION_PLAN.md` when a milestone is completed.
 - Commit regularly with small, reviewable checkpoints.
 - Avoid direct edits inside `vendor/llama-cpp` unless the task is explicitly about vendor patch maintenance; prefer patch-based updates under `patches/`.
+- If a task touches wasm fit logging behavior, update both the live vendor delta and `patches/llama-emscripten-sync-fit-logs.patch`.

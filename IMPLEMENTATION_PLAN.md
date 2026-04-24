@@ -250,7 +250,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Updated predictor response schema and API tests to validate the simplified contract.
   - [x] Consolidated `hf_range_plan` and `hf_range_fetch_helper` into a single helper module and removed duplicate files.
   - [x] Revalidated native tests, vendor fit/parity tests, and wasm browser fit execution with the new contract.
-15. [ ] Build a proper UI with an actual UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
+15. [x] Build a proper UI with an actual UI framework that is interactive and visually compares different fit scenarios across different models, quantization levels, or context sizes.
   - [x] Selected Svelte 5 + Vite as the UI framework (`ui/` directory). Chosen for minimal bundle size, reactive primitives without heavy runtime, and straightforward GitHub Pages deployment.
   - [x] Scaffolded `ui/` with Vite + Svelte template; cleaned up boilerplate, replaced `app.css` with project design tokens (warm cream / dark green palette, dark mode support).
   - [x] Implemented `FileUpload.svelte` — drag-and-drop / file-picker for local `.gguf` files with file name + size display.
@@ -264,8 +264,12 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Wired `VITE_WASM_BASE_URL` to accept full asset URLs (cross-port local dev) or relative paths (static hosting), and added a dedicated local assets server script that serves wasm/helper files in place without copy steps.
   - [x] Hardened `n_gpu_layers` UI handling so `-1` is preserved as "all layers on GPU" instead of drifting through invalid intermediate numeric states.
   - [x] Added a raw JSON harness view at `/?view=harness` so wasm requests can be pasted, submitted, and inspected directly through the Svelte app.
-16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
-17. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
+16. [ ] Finish wiring up ability to select models from HuggingFace repos directly in the UI, using the existing HF cache API to resolve model files and feeding them into the same header-range-fetch + parse flow used by the API tests.
+  - [ ] Need to have a UI Component that lets you search for models and then populate a list of potential GGUF files to select from.
+  - [ ] Should attempt to run the range fetch + parse flow on the selected file and display any errors or metadata results in the UI, and then allow the user to submit it to the predictor API once the metadata is successfully parsed.
+  - [ ] On the UI it should live next to the file upload at the top as a "Upload" OR "Search on HF" layout
+17. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
+18. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
   - [x] Added a new simulated backend module (`cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`) that exposes profile-aware fake ggml GPU devices (CUDA/Metal/Vulkan/Generic) with configurable free/total memory and null-terminated `ggml_backend_dev_t *` wiring for `llama_model_params.devices`.
   - [x] Routed in-process fit execution through `sim_backend` + stock `common_fit_params(...)` so predictor API fit execution no longer calls patched `common_fit_params_with_memory_override(...)`.
   - [x] Threaded optional per-device backend profile selection through API request parsing (`device.gpus[].backend`) and validated it in predictor API tests.
