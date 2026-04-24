@@ -35,6 +35,8 @@ struct fit_execution_request {
     uint64_t override_host_total_mib = 0;
     bool show_fit_logs = false;
     uint32_t n_ctx = 4096;
+    uint32_t n_batch = 0;
+    uint32_t n_ubatch = 0;
     uint32_t min_ctx = 0;
     int32_t n_gpu_layers = -1;
 };

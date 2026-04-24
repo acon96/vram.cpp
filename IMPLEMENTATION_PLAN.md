@@ -260,7 +260,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Added `lib/predictor.js` — lazy WASM initialisation helper (loads script tag, dynamic-imports browser helper, caches client promise).
   - [x] Added `lib/format.js` — MiB/GiB/byte conversion and display helpers.
   - [x] Verified production build (`npm run build` in `ui/`) produces clean output with no errors.
-  - [ ] Wire up the `VITE_WASM_BASE_URL` → copy WASM artifacts into `ui/public/wasm/` as part of the GitHub Pages deploy pipeline (tracked under item 16).
+  - [x] Wired `VITE_WASM_BASE_URL` to accept full asset URLs (cross-port local dev) or relative paths (static hosting), and added a dedicated local assets server script that serves wasm/helper files in place without copy steps.
 16. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 
 ## 10. Change Log
@@ -291,3 +291,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Added post-fit model/context instantiation inside the in-process API executor so fit responses now include detailed device and host model/context/compute breakdowns in both vendor-native and vendor-wasm builds.
 - 2026-04-23: Added explicit `fit.execute_in_process` API execution, validated it in a vendor-enabled native test path, and produced a successful vendor-enabled Emscripten build after aligning the predictor target with llama.cpp's wasm64 configuration.
 - 2026-04-24: Scaffolded Svelte 5 + Vite UI in `ui/` with FileUpload, ParamPanel, and ResultsTable components wired to the WASM predictor bridge; verified clean production build.
+- 2026-04-24: Switched UI wasm asset wiring to a URL-driven model (`VITE_WASM_BASE_URL`) with a dedicated CORS-enabled local assets server so Vite dev can run against in-place build artifacts on a separate port.

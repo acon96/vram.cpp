@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <exception>
 #include <cstdio>
+#include <string>
 
 #if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
 #include "llama.h"
@@ -18,8 +19,8 @@ namespace {
 
 constexpr size_t MiB = 1024 * 1024;
 
-uint64_t bytes_to_mib_ceil(uint64_t bytes) {
-    return (bytes + MiB - 1) / MiB;
+uint64_t bytes_to_mib_floor(uint64_t bytes) {
+    return bytes / MiB;
 }
 
 std::vector<uint64_t> broadcast(const std::vector<uint64_t> & values, size_t n, uint64_t fallback) {
@@ -34,8 +35,30 @@ std::vector<uint64_t> broadcast(const std::vector<uint64_t> & values, size_t n, 
     return out;
 }
 
+std::string join_u64_csv(const std::vector<uint64_t> & values) {
+    std::string out;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            out.push_back(',');
+        }
+        out += std::to_string(values[i]);
+    }
+    return out;
+}
+
 #if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
 void discard_log_callback(ggml_log_level, const char *, void *) {
+}
+
+void emscripten_passthrough_log_callback(ggml_log_level level, const char * text, void *) {
+    FILE * stream = stdout;
+    if (level == GGML_LOG_LEVEL_WARN || level == GGML_LOG_LEVEL_ERROR || level == GGML_LOG_LEVEL_DEBUG) {
+        stream = stderr;
+    }
+    if (text != nullptr) {
+        std::fputs(text, stream);
+    }
+    std::fflush(stream);
 }
 
 bool collect_memory_breakdown(
@@ -45,88 +68,61 @@ bool collect_memory_breakdown(
         const common_fit_memory_override * memory_override,
         fit_execution_result & result,
         std::string & error) {
+    llama_model_params adjusted_model_params = model_params;
     llama_context_params adjusted_context_params = context_params;
 #if defined(__EMSCRIPTEN__)
     adjusted_context_params.n_threads = 1;
     adjusted_context_params.n_threads_batch = 1;
 #endif
 
-    llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
-    if (model == nullptr) {
-        error = "failed_to_load_fitted_model";
+    std::vector<common_fit_memory_data> memory_rows;
+    std::vector<std::string> names;
+    std::string collect_error;
+    if (!common_fit_collect_memory_data(
+            model_path.c_str(),
+            &adjusted_model_params,
+            &adjusted_context_params,
+            GGML_LOG_LEVEL_ERROR,
+            memory_override,
+            memory_rows,
+            names,
+            collect_error,
+            false)) {
+        error = collect_error.empty()
+            ? "failed_to_collect_fit_memory_data"
+            : "failed_to_collect_fit_memory_data[" + collect_error + "]";
         return false;
     }
 
-    llama_context * context = llama_init_from_model(model, adjusted_context_params);
-    if (context == nullptr) {
-        llama_model_free(model);
-        error = "failed_to_create_fitted_context";
+    if (memory_rows.empty() || memory_rows.size() != names.size()) {
+        error = "invalid_fit_memory_data";
         return false;
-    }
-
-    const int device_count = llama_model_n_devices(model);
-    const llama_memory_breakdown memory_breakdown = llama_get_memory_breakdown(context);
-
-    std::vector<llama_memory_breakdown_data> device_mb(static_cast<size_t>(std::max(device_count, 0)));
-    llama_memory_breakdown_data host_mb;
-
-    for (const auto & buft_mb : memory_breakdown) {
-        ggml_backend_buffer_type_t buffer_type = buft_mb.first;
-        const llama_memory_breakdown_data & mb = buft_mb.second;
-        if (ggml_backend_buft_is_host(buffer_type)) {
-            host_mb.model += mb.model;
-            host_mb.context += mb.context;
-            host_mb.compute += mb.compute;
-            continue;
-        }
-
-        ggml_backend_dev_t dev = ggml_backend_buft_get_device(buffer_type);
-        if (dev == nullptr) {
-            continue;
-        }
-
-        for (int i = 0; i < device_count; ++i) {
-            if (dev == llama_model_get_device(model, i)) {
-                device_mb[static_cast<size_t>(i)].model += mb.model;
-                device_mb[static_cast<size_t>(i)].context += mb.context;
-                device_mb[static_cast<size_t>(i)].compute += mb.compute;
-                break;
-            }
-        }
     }
 
     result.devices.clear();
-    result.devices.reserve(static_cast<size_t>(std::max(device_count, 0)));
     result.totals = {};
 
-    for (int i = 0; i < device_count; ++i) {
-        ggml_backend_dev_t dev = llama_model_get_device(model, i);
-        const llama_memory_breakdown_data & mb = device_mb[static_cast<size_t>(i)];
+    const size_t host_index = memory_rows.size() - 1;
+    result.devices.reserve(host_index);
 
-        uint64_t free_b = 0;
-        uint64_t total_b = 0;
-        if (memory_override != nullptr && static_cast<size_t>(i) < memory_override->n_devices) {
-            free_b = static_cast<uint64_t>(memory_override->devices[i].free);
-            total_b = static_cast<uint64_t>(memory_override->devices[i].total);
-        } else {
-            size_t free_sz = 0;
-            size_t total_sz = 0;
-            ggml_backend_dev_memory(dev, &free_sz, &total_sz);
-            free_b = static_cast<uint64_t>(free_sz);
-            total_b = static_cast<uint64_t>(total_sz);
-        }
-
-        const uint64_t self_b = static_cast<uint64_t>(mb.total());
+    for (size_t i = 0; i < host_index; ++i) {
+        const common_fit_memory_data & row = memory_rows[i];
+        const uint64_t total_b = row.total > 0 ? static_cast<uint64_t>(row.total) : 0;
+        const uint64_t free_b = row.free > 0 ? static_cast<uint64_t>(row.free) : 0;
+        const uint64_t model_b = static_cast<uint64_t>(row.model);
+        const uint64_t context_b = static_cast<uint64_t>(row.context);
+        const uint64_t compute_b = static_cast<uint64_t>(row.compute);
+        const uint64_t self_b = model_b + context_b + compute_b;
         const uint64_t unaccounted_b = total_b >= self_b + free_b ? total_b - self_b - free_b : 0;
 
         fit_memory_breakdown_entry entry;
-        entry.name = std::string(ggml_backend_dev_name(dev)) + " (" + ggml_backend_dev_description(dev) + ")";
-        entry.total_mib = bytes_to_mib_ceil(total_b);
-        entry.free_mib = bytes_to_mib_ceil(free_b);
-        entry.model_mib = bytes_to_mib_ceil(static_cast<uint64_t>(mb.model));
-        entry.context_mib = bytes_to_mib_ceil(static_cast<uint64_t>(mb.context));
-        entry.compute_mib = bytes_to_mib_ceil(static_cast<uint64_t>(mb.compute));
-        entry.unaccounted_mib = bytes_to_mib_ceil(unaccounted_b);
+        entry.name = names[i];
+        entry.total_mib = bytes_to_mib_floor(total_b);
+        entry.free_mib = bytes_to_mib_floor(free_b);
+        entry.model_mib = bytes_to_mib_floor(model_b);
+        entry.context_mib = bytes_to_mib_floor(context_b);
+        entry.compute_mib = bytes_to_mib_floor(compute_b);
+        entry.unaccounted_mib = bytes_to_mib_floor(unaccounted_b);
         result.devices.push_back(entry);
 
         result.totals.model_mib += entry.model_mib;
@@ -134,40 +130,28 @@ bool collect_memory_breakdown(
         result.totals.compute_mib += entry.compute_mib;
     }
 
-    uint64_t host_free_b = 0;
-    uint64_t host_total_b = 0;
-    if (memory_override != nullptr && memory_override->override_host) {
-        host_free_b = static_cast<uint64_t>(memory_override->host.free);
-        host_total_b = static_cast<uint64_t>(memory_override->host.total);
-    } else {
-        ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-        if (cpu_dev != nullptr) {
-            size_t free_sz = 0;
-            size_t total_sz = 0;
-            ggml_backend_dev_memory(cpu_dev, &free_sz, &total_sz);
-            host_free_b = static_cast<uint64_t>(free_sz);
-            host_total_b = static_cast<uint64_t>(total_sz);
-        }
-    }
-
-    const uint64_t host_self_b = static_cast<uint64_t>(host_mb.total());
+    const common_fit_memory_data & host_row = memory_rows[host_index];
+    const uint64_t host_total_b = host_row.total > 0 ? static_cast<uint64_t>(host_row.total) : 0;
+    const uint64_t host_free_b = host_row.free > 0 ? static_cast<uint64_t>(host_row.free) : 0;
+    const uint64_t host_model_b = static_cast<uint64_t>(host_row.model);
+    const uint64_t host_context_b = static_cast<uint64_t>(host_row.context);
+    const uint64_t host_compute_b = static_cast<uint64_t>(host_row.compute);
+    const uint64_t host_self_b = host_model_b + host_context_b + host_compute_b;
     const uint64_t host_unaccounted_b = host_total_b >= host_self_b + host_free_b ? host_total_b - host_self_b - host_free_b : 0;
 
     result.host = {};
-    result.host.name = "Host";
-    result.host.total_mib = bytes_to_mib_ceil(host_total_b);
-    result.host.free_mib = bytes_to_mib_ceil(host_free_b);
-    result.host.model_mib = bytes_to_mib_ceil(static_cast<uint64_t>(host_mb.model));
-    result.host.context_mib = bytes_to_mib_ceil(static_cast<uint64_t>(host_mb.context));
-    result.host.compute_mib = bytes_to_mib_ceil(static_cast<uint64_t>(host_mb.compute));
-    result.host.unaccounted_mib = bytes_to_mib_ceil(host_unaccounted_b);
+    result.host.name = names[host_index];
+    result.host.total_mib = bytes_to_mib_floor(host_total_b);
+    result.host.free_mib = bytes_to_mib_floor(host_free_b);
+    result.host.model_mib = bytes_to_mib_floor(host_model_b);
+    result.host.context_mib = bytes_to_mib_floor(host_context_b);
+    result.host.compute_mib = bytes_to_mib_floor(host_compute_b);
+    result.host.unaccounted_mib = bytes_to_mib_floor(host_unaccounted_b);
 
     result.totals.model_mib += result.host.model_mib;
     result.totals.context_mib += result.host.context_mib;
     result.totals.compute_mib += result.host.compute_mib;
 
-    llama_free(context);
-    llama_model_free(model);
     return true;
 }
 
@@ -228,6 +212,9 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     std::string phase = "initialization";
     int original_common_log_verbosity = 0;
     bool common_log_verbosity_overridden = false;
+    ggml_log_callback original_log_callback = nullptr;
+    void * original_log_user_data = nullptr;
+    bool llama_logger_overridden = false;
 
     try {
     static const bool initialized = []() {
@@ -245,6 +232,12 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     llama_model_params mparams = llama_model_default_params();
     llama_context_params cparams = llama_context_default_params();
     cparams.n_ctx = request.n_ctx;
+    if (request.n_batch > 0) {
+        cparams.n_batch = request.n_batch;
+    }
+    if (request.n_ubatch > 0) {
+        cparams.n_ubatch = request.n_ubatch;
+    }
 #if defined(__EMSCRIPTEN__)
     cparams.n_threads = 1;
     cparams.n_threads_batch = 1;
@@ -338,12 +331,32 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
         margins_bytes[i] = static_cast<size_t>(margins_mib[i] * MiB);
     }
 
-    ggml_log_callback original_log_callback = nullptr;
-    void * original_log_user_data = nullptr;
-    if (!request.show_fit_logs) {
+    llama_log_get(&original_log_callback, &original_log_user_data);
+    if (request.show_fit_logs) {
+#if defined(__EMSCRIPTEN__)
+        phase = "install_emscripten_passthrough_logger";
+        llama_log_set(emscripten_passthrough_log_callback, nullptr);
+        llama_logger_overridden = true;
+        std::fprintf(stderr,
+            "[vram-fit] request model=%s n_ctx=%u n_batch=%u n_ubatch=%u min_ctx=%u n_gpu_layers=%d fit_target_mib=%s target_free_mib=%s override_device_free_mib=%s override_device_total_mib=%s override_host_free_mib=%llu override_host_total_mib=%llu\n",
+            request.model_path.c_str(),
+            request.n_ctx,
+            request.n_batch,
+            request.n_ubatch,
+            request.min_ctx,
+            request.n_gpu_layers,
+            join_u64_csv(request.fit_target_mib).c_str(),
+            join_u64_csv(request.target_free_mib).c_str(),
+            join_u64_csv(request.override_device_free_mib).c_str(),
+            join_u64_csv(request.override_device_total_mib).c_str(),
+            static_cast<unsigned long long>(request.override_host_free_mib),
+            static_cast<unsigned long long>(request.override_host_total_mib));
+        std::fflush(stderr);
+#endif
+    } else {
         phase = "install_quiet_logger";
-        llama_log_get(&original_log_callback, &original_log_user_data);
         llama_log_set(discard_log_callback, nullptr);
+        llama_logger_overridden = true;
     }
 
 #if defined(__EMSCRIPTEN__)
@@ -382,7 +395,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
         common_log_set_verbosity_thold(original_common_log_verbosity);
     }
 
-    if (!request.show_fit_logs) {
+    if (llama_logger_overridden) {
         phase = "restore_logger";
         llama_log_set(original_log_callback, original_log_user_data);
     }
@@ -412,6 +425,16 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
         phase = "collect_memory_breakdown";
         const common_fit_memory_override * breakdown_override = use_memory_override ? &memory_override : nullptr;
         if (!collect_memory_breakdown(request.model_path, mparams, cparams, breakdown_override, result, error)) {
+#if defined(__EMSCRIPTEN__)
+            if (request.show_fit_logs) {
+                std::fprintf(stderr,
+                    "[vram-fit] collect_memory_breakdown failed error=%s fitted_n_ctx=%u fitted_n_gpu_layers=%d\n",
+                    error.c_str(),
+                    cparams.n_ctx,
+                    mparams.n_gpu_layers);
+                std::fflush(stderr);
+            }
+#endif
             return false;
         }
     }
@@ -421,11 +444,17 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
         if (common_log_verbosity_overridden) {
             common_log_set_verbosity_thold(original_common_log_verbosity);
         }
+        if (llama_logger_overridden) {
+            llama_log_set(original_log_callback, original_log_user_data);
+        }
         error = "fit_execution_exception[" + phase + "]: " + exception.what();
         return false;
     } catch (...) {
         if (common_log_verbosity_overridden) {
             common_log_set_verbosity_thold(original_common_log_verbosity);
+        }
+        if (llama_logger_overridden) {
+            llama_log_set(original_log_callback, original_log_user_data);
         }
         error = "fit_execution_exception[" + phase + "]: unknown_exception";
         return false;

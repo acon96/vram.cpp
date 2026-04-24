@@ -1,0 +1,161 @@
+diff --git a/common/fit.cpp b/common/fit.cpp
+index 134854bc1..38ce80553 100644
+--- a/common/fit.cpp
++++ b/common/fit.cpp
+@@ -8,10 +8,35 @@
+ #include <cassert>
+ #include <stdexcept>
+ #include <cinttypes>
++#include <cstdarg>
++#include <cstdio>
+ #include <set>
+ #include <string>
+ #include <vector>
+ 
++#if defined(__EMSCRIPTEN__) && defined(VRAM_EMSCRIPTEN_SYNC_FIT_LOGS)
++static void vram_sync_fit_log(enum ggml_log_level level, const char * fmt, ...) {
++    FILE * stream = stdout;
++    if (level == GGML_LOG_LEVEL_WARN || level == GGML_LOG_LEVEL_ERROR || level == GGML_LOG_LEVEL_DEBUG) {
++        stream = stderr;
++    }
++
++    va_list args;
++    va_start(args, fmt);
++    std::vfprintf(stream, fmt, args);
++    va_end(args);
++    std::fflush(stream);
++}
++
++#undef LOG_TMPL
++#define LOG_TMPL(level, verbosity, ...)                         \
++    do {                                                        \
++        if ((verbosity) <= common_log_get_verbosity_thold()) { \
++            vram_sync_fit_log((level), __VA_ARGS__);           \
++        }                                                       \
++    } while (0)
++#endif
++
+ // this enum is only used in llama_params_fit_impl but needs to be defined outside of it to fix a Windows compilation issue
+ // enum to identify part of a layer for distributing its tensors:
+ enum common_layer_fraction_t {
+@@ -845,6 +870,72 @@ enum common_params_fit_status common_fit_params_with_memory_override(
+     return status;
+ }
+ 
++bool common_fit_collect_memory_data(
++        const char * path_model,
++    const llama_model_params * mparams,
++    const llama_context_params * cparams,
++        ggml_log_level log_level,
++        const common_fit_memory_override * memory_override,
++        std::vector<common_fit_memory_data> & out,
++        std::vector<std::string> & device_names,
++        std::string & error,
++        bool print_memory_breakdown) {
++    std::vector<ggml_backend_dev_t> devs;
++    uint32_t hp_ngl = 0;
++    uint32_t hp_nct = 0;
++    uint32_t hp_nex = 0;
++
++    try {
++        const auto dmd = common_get_device_memory_data(
++            path_model,
++            mparams,
++            cparams,
++            devs,
++            hp_ngl,
++            hp_nct,
++            hp_nex,
++            log_level,
++            memory_override,
++            print_memory_breakdown);
++
++        out.clear();
++        device_names.clear();
++        out.reserve(dmd.size());
++        device_names.reserve(dmd.size());
++
++        for (size_t i = 0; i < devs.size(); ++i) {
++            common_fit_memory_data row;
++            row.total = dmd[i].total;
++            row.free = dmd[i].free;
++            row.model = dmd[i].mb.model;
++            row.context = dmd[i].mb.context;
++            row.compute = dmd[i].mb.compute;
++            out.push_back(row);
++
++            device_names.push_back(std::string(ggml_backend_dev_name(devs[i])) + " (" + ggml_backend_dev_description(devs[i]) + ")");
++        }
++
++        if (!dmd.empty()) {
++            common_fit_memory_data host;
++            host.total = dmd.back().total;
++            host.free = dmd.back().free;
++            host.model = dmd.back().mb.model;
++            host.context = dmd.back().mb.context;
++            host.compute = dmd.back().mb.compute;
++            out.push_back(host);
++            device_names.push_back("Host");
++        }
++
++        return true;
++    } catch (const std::exception & e) {
++        error = e.what();
++        return false;
++    } catch (...) {
++        error = "unknown_exception";
++        return false;
++    }
++}
++
+ void common_memory_breakdown_print(const struct llama_context * ctx) {
+     //const auto & devices = ctx->get_model().devices;
+     const auto * model = llama_get_model(ctx);
+diff --git a/common/fit.h b/common/fit.h
+index e81bcfd5e..48339beb9 100644
+--- a/common/fit.h
++++ b/common/fit.h
+@@ -2,6 +2,10 @@
+ 
+ #include "ggml.h"
+ 
++#include <cstdint>
++#include <string>
++#include <vector>
++
+ struct common_fit_memory_override_device {
+   size_t free;
+   size_t total;
+@@ -16,6 +20,14 @@ struct common_fit_memory_override {
+   struct common_fit_memory_override_device host;
+ };
+ 
++struct common_fit_memory_data {
++    int64_t total = 0;
++    int64_t free = 0;
++    size_t model = 0;
++    size_t context = 0;
++    size_t compute = 0;
++};
++
+ enum common_params_fit_status {
+     COMMON_PARAMS_FIT_STATUS_SUCCESS = 0, // found allocations that are projected to fit
+     COMMON_PARAMS_FIT_STATUS_FAILURE = 1, // could not find allocations that are projected to fit
+@@ -51,6 +63,17 @@ enum common_params_fit_status common_fit_params_with_memory_override(
+       const struct common_fit_memory_override * memory_override,
+                                        bool     print_memory_breakdown);
+ 
++bool common_fit_collect_memory_data(
++                               const char   * path_model,
++          const struct llama_model_params   * mparams,
++          const struct llama_context_params * cparams,
++                        enum ggml_log_level   log_level,
++      const struct common_fit_memory_override * memory_override,
++            std::vector<common_fit_memory_data> & out,
++                  std::vector<std::string> & device_names,
++                              std::string & error,
++                                       bool print_memory_breakdown);
++
+ // print estimated memory to stdout
+ void common_fit_print(
+                                const char   * path_model,

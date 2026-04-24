@@ -9,6 +9,15 @@
     const recommended = $derived(fit?.recommended);
     const memBytes = $derived(fit?.memoryBytes);
     const warnings = $derived(fit?.warnings ?? []);
+    const fitStatus = $derived(fit?.status);
+
+    function fitStatusMessage(code) {
+        if (code === 0) return 'fit_success';
+        if (code === 1) return 'fit_failure_no_viable_allocation';
+        if (code === 2) return 'fit_error_hard_failure';
+        if (code == null) return 'fit_status_unset';
+        return `fit_status_unknown_${code}`;
+    }
 
     function deviceRows(breakdown) {
         if (!breakdown) return [];
@@ -70,8 +79,23 @@
         </div>
     {/if}
 
+    <!-- Error state -->
+    {#if result?.ok === false}
+        <div class="empty-state error-state">
+            <p>Prediction failed: {result.error ?? fitStatusMessage(fitStatus)}</p>
+            {#if fitStatus != null}
+                <p class="detail">status code: {fitStatus}</p>
+            {/if}
+            {#if warnings.length > 0}
+                <p class="detail">warnings: {warnings.join(', ')}</p>
+            {/if}
+            {#if result.detail}
+                <p class="detail">{result.detail}</p>
+            {/if}
+        </div>
+
     <!-- Memory breakdown table -->
-    {#if rows.length > 0}
+    {:else if rows.length > 0}
         <div class="table-scroll">
             <table>
                 <thead>
@@ -128,13 +152,6 @@
                     </tfoot>
                 {/if}
             </table>
-        </div>
-    {:else if result?.ok === false}
-        <div class="empty-state error-state">
-            <p>Prediction failed: {result.error ?? 'unknown error'}</p>
-            {#if result.detail}
-                <p class="detail">{result.detail}</p>
-            {/if}
         </div>
     {:else}
         <div class="empty-state">

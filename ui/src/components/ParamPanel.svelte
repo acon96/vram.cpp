@@ -4,6 +4,8 @@
      *
      * @typedef {object} Params
      * @property {number}   nCtx
+    * @property {number}   nBatch
+    * @property {number}   nUbatch
      * @property {string}   cacheTypeK
      * @property {string}   cacheTypeV
      * @property {number}   nGpuLayers
@@ -39,6 +41,19 @@
         const total = parseFloat(value) || 0;
         const gpu = params.gpus[index];
         updateGpu(index, { totalGiB: total, freeGiB: Math.min(gpu.freeGiB, total) });
+    }
+
+    function onBatchChange(value) {
+        const next = Math.max(1, parseInt(value, 10) || 1);
+        update({
+            nBatch: next,
+            nUbatch: Math.min(params.nUbatch, next),
+        });
+    }
+
+    function onUbatchChange(value) {
+        const next = Math.max(1, parseInt(value, 10) || 1);
+        update({ nUbatch: Math.min(next, params.nBatch) });
     }
 </script>
 
@@ -103,6 +118,33 @@
                     oninput={(e) => update({ nGpuLayers: parseInt(e.currentTarget.value) })}
                 />
                 <span class="hint">{params.nGpuLayers === -1 ? 'all layers on GPU' : params.nGpuLayers === 0 ? 'CPU only' : `${params.nGpuLayers} layers`}</span>
+            </div>
+        </div>
+
+        <div class="field-row">
+            <div class="field">
+                <label for="n-batch">Batch size (n_batch)</label>
+                <input
+                    id="n-batch"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={params.nBatch}
+                    oninput={(e) => onBatchChange(e.currentTarget.value)}
+                />
+            </div>
+
+            <div class="field">
+                <label for="n-ubatch">Micro-batch size (n_ubatch)</label>
+                <input
+                    id="n-ubatch"
+                    type="number"
+                    min="1"
+                    max={params.nBatch}
+                    step="1"
+                    value={params.nUbatch}
+                    oninput={(e) => onUbatchChange(e.currentTarget.value)}
+                />
             </div>
         </div>
     </section>

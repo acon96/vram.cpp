@@ -25,6 +25,12 @@ if(VRAM_ENABLE_VENDOR_LLAMA AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama
     # Keep llama.cpp available for future linking while avoiding full builds by default.
     set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build llama common library" FORCE)
     add_subdirectory(vendor/llama-cpp EXCLUDE_FROM_ALL)
+
+    if(EMSCRIPTEN AND TARGET llama-common)
+        # Force fit logging in wasm builds to use a synchronous path so no
+        # common logger worker thread is constructed under Emscripten.
+        target_compile_definitions(llama-common PRIVATE VRAM_EMSCRIPTEN_SYNC_FIT_LOGS=1)
+    endif()
 endif()
 
 if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS AND NOT EMSCRIPTEN)

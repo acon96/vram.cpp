@@ -60,6 +60,7 @@ cmake --build build-wasm-vendor --target vram_predictor_wasm -j4
   - `VRAM_LLAMA_FIT_BINARY`
   - `VRAM_FIT_HARNESS_BINARY`
 - `.fixtures/` is gitignored; do not assume fixtures exist in fresh clones.
+    - If you need to use a real GGUF file, search in this folder
 
 ## API Contract Guardrails
 - Keep responses compact and stable (item 14 simplification).

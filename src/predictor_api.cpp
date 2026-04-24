@@ -420,6 +420,18 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             args.push_back(std::to_string(n_ctx));
         }
 
+        const uint64_t n_batch = json_u64_or_default(runtime, "n_batch", 0);
+        if (n_batch > 0) {
+            args.push_back("--batch-size");
+            args.push_back(std::to_string(n_batch));
+        }
+
+        const uint64_t n_ubatch = json_u64_or_default(runtime, "n_ubatch", 0);
+        if (n_ubatch > 0) {
+            args.push_back("--ubatch-size");
+            args.push_back(std::to_string(n_ubatch));
+        }
+
         if (runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()) {
             args.push_back("--n-gpu-layers");
             args.push_back(std::to_string(runtime["n_gpu_layers"].get<int64_t>()));
@@ -446,6 +458,8 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             exec_request.show_fit_logs = show_fit_logs;
             exec_request.min_ctx = static_cast<uint32_t>(fit_ctx_min);
             exec_request.n_ctx = static_cast<uint32_t>(n_ctx > 0 ? n_ctx : 4096);
+            exec_request.n_batch = static_cast<uint32_t>(n_batch);
+            exec_request.n_ubatch = static_cast<uint32_t>(n_ubatch);
             exec_request.n_gpu_layers = runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()
                 ? static_cast<int32_t>(runtime["n_gpu_layers"].get<int64_t>())
                 : -1;

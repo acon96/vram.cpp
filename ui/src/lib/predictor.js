@@ -8,17 +8,51 @@
 
 let clientPromise = null;
 
+function isDebugEnabled() {
+    if (typeof globalThis.__VRAM_DEBUG__ === 'boolean') {
+        return globalThis.__VRAM_DEBUG__;
+    }
+    return false;
+}
+
+function debugLog(event, payload) {
+    if (!isDebugEnabled()) return;
+    console.log(`[vram-ui] ${event}`, payload);
+}
+
+function debugError(event, payload) {
+    if (!isDebugEnabled()) return;
+    console.error(`[vram-ui] ${event}`, payload);
+}
+
+function toAbsoluteUrl(urlLike) {
+    return new URL(urlLike, window.location.href).toString();
+}
+
 async function loadScript(src) {
+    const absoluteSrc = toAbsoluteUrl(src);
+
+    debugLog('loadScript.start', { src: absoluteSrc });
+
     return new Promise((resolve, reject) => {
-        const existing = document.querySelector(`script[src="${src}"]`);
+        const existing = Array.from(document.querySelectorAll('script')).find(
+            (script) => script.src === absoluteSrc
+        );
         if (existing) {
+            debugLog('loadScript.reuseExistingTag', { src: absoluteSrc });
             resolve();
             return;
         }
         const s = document.createElement('script');
-        s.src = src;
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error(`Failed to load WASM script: ${src}`));
+        s.src = absoluteSrc;
+        s.onload = () => {
+            debugLog('loadScript.loaded', { src: absoluteSrc });
+            resolve();
+        };
+        s.onerror = () => {
+            debugError('loadScript.error', { src: absoluteSrc });
+            reject(new Error(`Failed to load WASM script: ${absoluteSrc}`));
+        };
         document.head.appendChild(s);
     });
 }
@@ -32,10 +66,25 @@ async function loadScript(src) {
  * @returns {Promise<object>} client created by createBrowserPredictorClient
  */
 export async function initPredictor({ wasmJsUrl, browserHelperUrl }) {
-    if (clientPromise) return clientPromise;
+    if (clientPromise) {
+        debugLog('initPredictor.cacheHit', {
+            wasmJsUrl,
+            browserHelperUrl,
+        });
+        return clientPromise;
+    }
 
     clientPromise = (async () => {
-        await loadScript(wasmJsUrl);
+        const startedAt = globalThis.performance?.now?.() ?? Date.now();
+        const wasmScriptUrl = toAbsoluteUrl(wasmJsUrl);
+        const helperModuleUrl = toAbsoluteUrl(browserHelperUrl);
+
+        debugLog('initPredictor.start', {
+            wasmScriptUrl,
+            helperModuleUrl,
+        });
+
+        await loadScript(wasmScriptUrl);
 
         const factory = globalThis.createVRAMPredictorModule;
         if (typeof factory !== 'function') {
@@ -45,20 +94,39 @@ export async function initPredictor({ wasmJsUrl, browserHelperUrl }) {
             );
         }
 
-        const { createBrowserPredictorClient } = await import(/* @vite-ignore */ browserHelperUrl);
+        debugLog('initPredictor.factoryReady', {
+            factoryType: typeof factory,
+        });
+
+        const { createBrowserPredictorClient } = await import(/* @vite-ignore */ helperModuleUrl);
+
+        debugLog('initPredictor.helperImported', {
+            hasCreateBrowserPredictorClient: typeof createBrowserPredictorClient === 'function',
+        });
 
         const client = await createBrowserPredictorClient({
             moduleFactory: factory,
             moduleOptions: {
-                locateFile: (path) => {
-                    const base = wasmJsUrl.substring(0, wasmJsUrl.lastIndexOf('/') + 1);
-                    return base + path;
-                },
+                locateFile: (path) => new URL(path, wasmScriptUrl).toString(),
             },
         });
 
+        const finishedAt = globalThis.performance?.now?.() ?? Date.now();
+        debugLog('initPredictor.clientReady', {
+            elapsedMs: Math.round((finishedAt - startedAt) * 100) / 100,
+            hasPredictMountedFit: typeof client?.predictMountedFit === 'function',
+        });
+
         return client;
-    })();
+    })().catch((error) => {
+        debugError('initPredictor.error', {
+            wasmJsUrl,
+            browserHelperUrl,
+            error,
+        });
+        clientPromise = null;
+        throw error;
+    });
 
     return clientPromise;
 }
@@ -67,5 +135,6 @@ export async function initPredictor({ wasmJsUrl, browserHelperUrl }) {
  * Reset the cached client promise (useful when changing WASM paths).
  */
 export function resetPredictor() {
+    debugLog('resetPredictor', {});
     clientPromise = null;
 }

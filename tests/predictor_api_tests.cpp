@@ -151,7 +151,7 @@ void test_fit_mode_command_planning() {
         "{"
         "\"mode\":\"fit\","
         "\"model\":{\"source\":\"local\",\"path\":\"/tmp/sample.gguf\"},"
-                "\"runtime\":{\"n_ctx\":4096,\"n_gpu_layers\":-1,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+                "\"runtime\":{\"n_ctx\":4096,\"n_batch\":768,\"n_ubatch\":256,\"n_gpu_layers\":-1,\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
                 "\"device\":{"
                     "\"host_ram_bytes\":34359738368,"
                     "\"fit_target_mib\":[256,512],"
@@ -176,6 +176,8 @@ void test_fit_mode_command_planning() {
     assert(contains(body, "--override-device-free-mib"));
     assert(contains(body, "--override-device-total-mib"));
     assert(contains(body, "--override-host-free-mib"));
+    assert(contains(body, "--batch-size"));
+    assert(contains(body, "--ubatch-size"));
     assert(contains(body, "--n-gpu-layers"));
     assert(contains(body, "--show-fit-logs"));
     assert(contains(body, "256,512"));

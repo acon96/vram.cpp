@@ -1,43 +1,63 @@
-# Svelte + Vite
+# vram.cpp UI (Svelte + Vite)
 
-This template should help get you started developing with Svelte in Vite.
+This UI loads the predictor wasm artifacts from an external assets origin set by `VITE_WASM_BASE_URL`.
 
-## Recommended IDE Setup
+## Local Development (Two Servers)
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+1. Build vendor-enabled wasm artifacts from repo root:
 
-## Need an official Svelte framework?
-
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
-
-## Technical considerations
-
-**Why use this over SvelteKit?**
-
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
-
-This template contains as little as possible to get started with Vite + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
-
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
-
-**Why include `.vscode/extensions.json`?**
-
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
-
-**Why enable `checkJs` in the JS template?**
-
-It is likely that most cases of changing variable types in runtime are likely to be accidental, rather than deliberate. This provides advanced typechecking out of the box. Should you like to take advantage of the dynamically-typed nature of JavaScript, it is trivial to change the configuration.
-
-**Why is HMR not preserving my local component state?**
-
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/sveltejs/svelte-hmr/tree/master/packages/svelte-hmr#preservation-of-local-state).
-
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
-
-```js
-// store.js
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
+```bash
+source ~/emsdk/emsdk_env.sh
+cmake -S . -B build-wasm-vendor -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_TESTS=OFF
+cmake --build build-wasm-vendor --target vram_predictor_wasm -j4
 ```
+
+2. In `ui/`, start the assets server (defaults to `http://127.0.0.1:8123/assets/`):
+
+```bash
+npm run assets:serve
+```
+
+3. In `ui/`, start Vite:
+
+```bash
+npm run dev
+```
+
+The checked-in [ui/.env.development](.env.development) points Vite dev to `http://127.0.0.1:8123/assets/`.
+
+## Environment Variables
+
+- `VITE_WASM_BASE_URL`: Full URL or relative path containing:
+	- `vram_predictor_wasm.js`
+	- `vram_predictor_wasm.wasm`
+	- `vram_predictor_browser.js`
+
+- `VITE_DEBUG_WASM`: Set to `1` to force verbose frontend/wasm debug logs in the browser console.
+  - In dev mode, debug logs are enabled by default.
+  - At runtime, you can override with `window.__VRAM_DEBUG__ = true` or `window.__VRAM_DEBUG__ = false`.
+  - The helper also supports local storage toggles: `localStorage.setItem('vram.debug', '1')` or `localStorage.setItem('vram.debug', '0')`.
+
+- `VITE_DEBUG_WASM_FIT_LOGS`: Set to `1` to forward `show_fit_logs=true` to the backend fit call.
+	- Default is off, even in dev mode.
+	- In browser wasm builds this can trigger `thread constructor failed: Not supported` in some llama/common logging paths.
+
+- `VITE_BASE_URL`: Vite base path for deployed app routing/asset resolution.
+
+Assets server options:
+
+- `WASM_ASSETS_HOST` (default `127.0.0.1`)
+- `WASM_ASSETS_PORT` (default `8123`)
+- `WASM_ASSETS_PATH` (default `/assets`)
+- `WASM_BUILD_DIR` (default `build-wasm-vendor`)
+- `WASM_HELPER_PATH` (default `web/vram_predictor_browser.js`)
+
+## GitHub Pages / Production
+
+For production builds, set `VITE_WASM_BASE_URL` to the deployed wasm asset URL (full URL or site-relative path), then run:
+
+```bash
+npm run build
+```
+
+This keeps local multi-port development and final static hosting on the same configuration surface.

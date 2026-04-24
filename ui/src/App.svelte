@@ -6,22 +6,60 @@
     import { giBToBytes } from './lib/format.js';
 
     // ── WASM paths ────────────────────────────────────────────────────────────
-    // These can be overridden at build time via VITE_WASM_BASE_URL env var.
-    // For local dev pointing at build-wasm-vendor/, set the env var or adjust.
-    const wasmBase = import.meta.env.VITE_WASM_BASE_URL ?? './wasm';
-    const wasmJsUrl = `${wasmBase}/vram_predictor_wasm.js`;
-    const browserHelperUrl = `${wasmBase}/vram_predictor_browser.js`;
+    // VITE_WASM_BASE_URL accepts a full URL (for cross-port local assets)
+    // or a relative path (for static GitHub Pages deployments).
+    const configuredWasmBase = import.meta.env.VITE_WASM_BASE_URL ?? './wasm/';
+    const wasmBaseUrl = new URL(configuredWasmBase, window.location.href);
+    const wasmJsUrl = new URL('vram_predictor_wasm.js', wasmBaseUrl).toString();
+    const browserHelperUrl = new URL('vram_predictor_browser.js', wasmBaseUrl).toString();
+
+    const wasmDebugEnabled = import.meta.env.VITE_DEBUG_WASM === '1' || import.meta.env.DEV;
+    const wasmFitLogsEnabled = import.meta.env.VITE_DEBUG_WASM_FIT_LOGS === '1';
+    globalThis.__VRAM_DEBUG__ = wasmDebugEnabled;
+
+    function debugLog(event, payload) {
+        if (!wasmDebugEnabled) return;
+        console.log(`[vram-ui] ${event}`, payload);
+    }
+
+    function debugError(event, payload) {
+        if (!wasmDebugEnabled) return;
+        console.error(`[vram-ui] ${event}`, payload);
+    }
+
+    function describeFitStatus(statusCode) {
+        if (statusCode === 0) {
+            return 'fit_success';
+        }
+        if (statusCode === 1) {
+            return 'fit_failure_no_viable_allocation';
+        }
+        if (statusCode === 2) {
+            return 'fit_error_hard_failure';
+        }
+        return `fit_status_unknown_${statusCode}`;
+    }
+
+    debugLog('config', {
+        wasmDebugEnabled,
+        wasmFitLogsEnabled,
+        configuredWasmBase,
+        wasmJsUrl,
+        browserHelperUrl,
+    });
 
     // ── State ─────────────────────────────────────────────────────────────────
     let selectedFile = $state(null);
 
     let params = $state({
         nCtx: 4096,
+        nBatch: 2048,
+        nUbatch: 512,
         cacheTypeK: 'f16',
         cacheTypeV: 'f16',
-        nGpuLayers: -1,
+        nGpuLayers: 0,
         hostRamGiB: 32,
-        gpus: [{ totalGiB: 8, freeGiB: 8 }],
+        gpus: [],
         fitTargetMiB: 512,
         targetFreeMiB: 2048,
     });
@@ -32,6 +70,11 @@
 
     // ── Handlers ──────────────────────────────────────────────────────────────
     function handleFile(file) {
+        debugLog('handleFile', {
+            name: file?.name,
+            sizeBytes: file?.size,
+            type: file?.type,
+        });
         selectedFile = file;
         result = null;
         status = 'idle';
@@ -39,6 +82,7 @@
     }
 
     function handleParamsChange(p) {
+        debugLog('handleParamsChange', p);
         params = p;
     }
 
@@ -55,16 +99,36 @@
 
         let client;
         try {
+            debugLog('runPrediction.initPredictor.start', {
+                wasmJsUrl,
+                browserHelperUrl,
+            });
+
             client = await initPredictor({ wasmJsUrl, browserHelperUrl });
+
+            try {
+                const systemInfo = client.getSystemInfo();
+                debugLog('runPrediction.systemInfo', systemInfo);
+            } catch (systemInfoError) {
+                debugError('runPrediction.systemInfo.error', { systemInfoError });
+            }
         } catch (err) {
             status = 'error';
             errorMsg = `Failed to load WASM module: ${err.message}`;
+            debugError('runPrediction.initPredictor.error', { err });
             return;
         }
 
         status = 'running';
         try {
+            const mountStartedAt = performance.now();
             const virtualPath = await client.mountBrowserFile(selectedFile);
+            const mountElapsedMs = Math.round((performance.now() - mountStartedAt) * 100) / 100;
+
+            debugLog('runPrediction.mount.complete', {
+                virtualPath,
+                mountElapsedMs,
+            });
 
             const gpus = params.gpus.map((g, i) => ({
                 id: `gpu${i}`,
@@ -79,27 +143,112 @@
                 ? params.gpus.map(() => params.targetFreeMiB)
                 : [params.targetFreeMiB];
 
-            const res = client.predictMountedFit({
+            const predictInput = {
                 modelPath: virtualPath,
                 hostRamBytes: giBToBytes(params.hostRamGiB),
                 fitTargetMiB: fitTargets,
                 targetFreeMiB: freeTargets,
                 gpus,
                 nCtx: params.nCtx,
+                nBatch: params.nBatch,
+                nUbatch: params.nUbatch,
                 nGpuLayers: params.nGpuLayers,
                 cacheTypeK: params.cacheTypeK,
                 cacheTypeV: params.cacheTypeV,
                 minCtx: 512,
+                // Keep llama/common fit logs opt-in only in wasm. Some logging
+                // paths can try to spawn threads that are unavailable.
+                showFitLogs: wasmFitLogsEnabled,
+            };
+
+            debugLog('runPrediction.predictMountedFit.input', predictInput);
+
+            const predictStartedAt = performance.now();
+            let res = client.predictMountedFit(predictInput);
+            let predictElapsedMs = Math.round((performance.now() - predictStartedAt) * 100) / 100;
+
+            const hasThreadCtorError = res?.ok === false
+                && typeof res?.error === 'string'
+                && res.error.includes('thread constructor failed: Not supported');
+
+            if (hasThreadCtorError && predictInput.showFitLogs) {
+                debugError('runPrediction.predictMountedFit.threadLoggingRetry', {
+                    firstResponse: res,
+                    retryWithShowFitLogs: false,
+                });
+
+                const retryStartedAt = performance.now();
+                res = client.predictMountedFit({
+                    ...predictInput,
+                    showFitLogs: false,
+                });
+                const retryElapsedMs = Math.round((performance.now() - retryStartedAt) * 100) / 100;
+                predictElapsedMs = Math.round((predictElapsedMs + retryElapsedMs) * 100) / 100;
+
+                debugLog('runPrediction.predictMountedFit.retryOutput', {
+                    retryElapsedMs,
+                    response: res,
+                });
+            }
+
+            debugLog('runPrediction.predictMountedFit.output', {
+                predictElapsedMs,
+                response: res,
+                fitStatusText: describeFitStatus(res?.fit?.status),
             });
 
             result = res;
-            status = 'done';
+            if (res?.ok === false) {
+                status = 'error';
+                const fitStatusText = describeFitStatus(res?.fit?.status);
+                const fitWarnings = Array.isArray(res?.fit?.warnings) && res.fit.warnings.length > 0
+                    ? ` warnings=${res.fit.warnings.join(',')}`
+                    : '';
+                const backendError = typeof res?.error === 'string' ? ` backendError=${res.error}` : '';
+                const deviceCountInResponse = Array.isArray(res?.fit?.breakdown?.devices)
+                    ? res.fit.breakdown.devices.length
+                    : 0;
+                const sentGpuOverrides = Array.isArray(predictInput.gpus)
+                    ? predictInput.gpus.length
+                    : 0;
+
+                let hint = '';
+                if (res?.fit?.status === 2 && sentGpuOverrides > 0 && deviceCountInResponse === 0) {
+                    hint = ' Hint: this may be a GPU override/device-count mismatch on the wasm backend. Try removing GPU rows and retrying.';
+                }
+                if (typeof res?.error === 'string' && res.error.includes('thread constructor failed: Not supported')) {
+                    hint += ' Hint: backend fit logs are trying to use a thread path unsupported by this wasm build. Keep VITE_DEBUG_WASM_FIT_LOGS unset.';
+                }
+                if (typeof res?.error === 'string' && res.error.includes('failed_to_create_fitted_context')) {
+                    hint += ' Hint: fit projection succeeded, but creating the actual fitted context failed in wasm (likely runtime heap allocation limits and/or batch buffer size). Try a lower n_ctx.';
+                }
+
+                errorMsg = `WASM fit failed (${fitStatusText}).${fitWarnings}${backendError}${hint}`;
+                debugError('runPrediction.predictMountedFit.failed', {
+                    fitStatus: res?.fit?.status,
+                    fitStatusText,
+                    warnings: res?.fit?.warnings,
+                    sentGpuOverrides,
+                    deviceCountInResponse,
+                    response: res,
+                });
+            } else {
+                status = 'done';
+            }
 
             // Clean up the mounted file from WASM virtual FS
-            try { client.unmountFile(virtualPath); } catch (_) {}
+            try {
+                client.unmountFile(virtualPath);
+            } catch (unmountError) {
+                debugError('runPrediction.unmount.error', {
+                    virtualPath,
+                    unmountError,
+                });
+            }
         } catch (err) {
             status = 'error';
             errorMsg = err.message ?? String(err);
+            debugError('runPrediction.error', { err });
         }
     }
 
