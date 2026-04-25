@@ -5,12 +5,10 @@
  * callbacks so these remain independently testable.
  */
 
-import { extractContextLengthFromPrefix, parseGgufSplitInfo } from './gguf_utils.js';
+import { gguf } from '@huggingface/gguf';
 import {
     buildCanonicalHfFileUrl,
-    buildHfRangePlan,
     buildHfSelectionCacheKey,
-    buildShardUrl,
     detectShardPattern,
     fetchHfPrefixBytes,
     parseTotalBytesFromFetchHeaders,
@@ -20,6 +18,217 @@ import {
 // Each shard GGUF header (tensor descriptors for its subset of tensors) is
 // typically well under 50 KiB; 128 KiB is a generous safety margin.
 const SHARD_HEADER_BYTES = 1024 * 1024;
+const TENSOR_PREVIEW_COUNT = 32;
+
+function toSafeInteger(value, fallback = 0) {
+    if (typeof value === 'bigint') {
+        if (value < 0 || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+            return fallback;
+        }
+        return Number(value);
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+
+    return Math.trunc(parsed);
+}
+
+function readMetadataInteger(metadata, key) {
+    if (!metadata || !(key in metadata)) {
+        return 0;
+    }
+
+    const parsed = toSafeInteger(metadata[key], 0);
+    return parsed > 0 ? parsed : 0;
+}
+
+function extractContextLengthFromMetadata(metadata) {
+    if (!metadata || typeof metadata !== 'object') {
+        return 0;
+    }
+
+    const architecture = typeof metadata['general.architecture'] === 'string'
+        ? metadata['general.architecture']
+        : '';
+
+    if (architecture) {
+        const exact = readMetadataInteger(metadata, `${architecture}.context_length`);
+        if (exact > 0) {
+            return exact;
+        }
+    }
+
+    return readMetadataInteger(metadata, 'context_length');
+}
+
+function extractSplitInfoFromMetadata(metadata) {
+    return {
+        splitCount: readMetadataInteger(metadata, 'split.count'),
+        splitNo: readMetadataInteger(metadata, 'split.no'),
+    };
+}
+
+function summarizeTensorInfo(tensor) {
+    return {
+        name: tensor?.name ?? 'unknown',
+        dimensions: Array.isArray(tensor?.shape)
+            ? tensor.shape.map((dim) => {
+                if (typeof dim === 'bigint') {
+                    return dim <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(dim) : dim.toString();
+                }
+                return Number.isFinite(Number(dim)) ? Math.trunc(Number(dim)) : String(dim);
+            })
+            : [],
+        ggmlType: toSafeInteger(tensor?.dtype, tensor?.dtype ?? 0),
+        dataOffset: typeof tensor?.offset === 'bigint'
+            ? (tensor.offset <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(tensor.offset) : tensor.offset.toString())
+            : toSafeInteger(tensor?.offset, 0),
+    };
+}
+
+function buildMetadataSummary(parsed, bytesConsumed) {
+    const metadata = parsed?.metadata ?? {};
+    const tensorInfos = Array.isArray(parsed?.tensorInfos) ? parsed.tensorInfos : [];
+
+    return {
+        version: toSafeInteger(metadata.version, 0),
+        kvCount: toSafeInteger(metadata.kv_count, 0),
+        tensorCount: toSafeInteger(metadata.tensor_count, tensorInfos.length),
+        bytesConsumed,
+        tensors: tensorInfos.slice(0, TENSOR_PREVIEW_COUNT).map(summarizeTensorInfo),
+    };
+}
+
+function parseRangeHeader(rangeValue) {
+    const match = /^bytes=(\d+)-(\d+)$/i.exec(String(rangeValue || '').trim());
+    if (!match) {
+        return { start: 0, end: 0 };
+    }
+
+    return {
+        start: Number.parseInt(match[1], 10),
+        end: Number.parseInt(match[2], 10),
+    };
+}
+
+function buildTrackedFetch(requests, attempts, token, includeAuth) {
+    return async (input, init = {}) => {
+        const requestUrl = typeof input === 'string' ? input : input?.url;
+        const headers = new Headers(init?.headers ?? (typeof input === 'object' ? input?.headers : undefined) ?? undefined);
+
+        if (includeAuth && token) {
+            headers.set('Authorization', `Bearer ${token}`);
+        }
+
+        const rangeValue = headers.get('Range') ?? '';
+        const { start, end } = parseRangeHeader(rangeValue);
+        requests.push({
+            url: requestUrl,
+            start,
+            end,
+            headers: [
+                ...(rangeValue ? [{ name: 'Range', value: rangeValue }] : []),
+                ...(headers.has('Accept') ? [{ name: 'Accept', value: headers.get('Accept') }] : []),
+                ...(headers.has('Authorization') ? [{ name: 'Authorization', value: 'Bearer ***' }] : []),
+            ],
+        });
+
+        const response = await fetch(requestUrl, {
+            ...init,
+            headers,
+            redirect: 'follow',
+        });
+
+        attempts.push({
+            start,
+            end,
+            httpStatus: response.status,
+            finalUrl: response.url || requestUrl,
+            contentRange: response.headers.get('content-range') || '',
+            contentLength: response.headers.get('content-length') || '',
+            acceptRanges: response.headers.get('accept-ranges') || '',
+        });
+
+        return response;
+    };
+}
+
+async function parseRemoteGguf(selection, requestUrl, logger) {
+    const requests = [];
+    const attempts = [];
+    const token = (selection?.token || '').trim();
+    const includeAuth = requestUrl.startsWith('https://huggingface.co/');
+    const trackedFetch = buildTrackedFetch(requests, attempts, token, includeAuth);
+
+    logger?.log('hf.gguf.parse.start', {
+        requestUrl,
+        includeAuth,
+    });
+
+    const parsed = await gguf(requestUrl, {
+        typedMetadata: true,
+        fetch: trackedFetch,
+    });
+
+    const bytesConsumed = toSafeInteger(parsed?.tensorDataOffset, 0);
+    if (bytesConsumed <= 0) {
+        throw new Error('gguf_tensor_data_offset_invalid');
+    }
+
+    const prefixFetchResult = await fetchHfPrefixBytes(
+        requestUrl,
+        0,
+        bytesConsumed - 1,
+        token,
+        includeAuth,
+    );
+
+    requests.push({
+        url: requestUrl,
+        start: 0,
+        end: bytesConsumed - 1,
+        headers: [
+            { name: 'Range', value: `bytes=0-${bytesConsumed - 1}` },
+            { name: 'Accept', value: 'application/octet-stream' },
+            ...(includeAuth && token ? [{ name: 'Authorization', value: 'Bearer ***' }] : []),
+        ],
+    });
+
+    attempts.push({
+        start: 0,
+        end: bytesConsumed - 1,
+        httpStatus: prefixFetchResult.httpStatus,
+        finalUrl: prefixFetchResult.finalUrl,
+        contentRange: prefixFetchResult.contentRange,
+        contentLength: prefixFetchResult.contentLength,
+        acceptRanges: prefixFetchResult.acceptRanges,
+        fetchedChunkBytes: prefixFetchResult.bytes.byteLength,
+        purpose: 'stub-prefix',
+    });
+
+    logger?.log('hf.gguf.parse.done', {
+        requestUrl,
+        bytesConsumed,
+        tensorCount: parsed?.tensorInfos?.length ?? 0,
+    });
+
+    return {
+        parsed,
+        requests,
+        attempts,
+        prefixFetchResult,
+        prefixBytes: prefixFetchResult.bytes,
+        metadataResponse: {
+            ok: true,
+            source: 'huggingface',
+            resolvedUrl: prefixFetchResult.finalUrl || requestUrl,
+            metadata: buildMetadataSummary(parsed, bytesConsumed),
+        },
+    };
+}
 
 /**
  * Assemble the cached prefetch result object from a successful metadata parse
@@ -27,14 +236,14 @@ const SHARD_HEADER_BYTES = 1024 * 1024;
  */
 export function buildPreparedHfFitResult(
     selection, requestUrl, requests, attempts,
-    prefixBytes, fetchResult, metadataResponse,
+    prefixBytes, fetchResult, metadataResponse, parsedMetadata,
 ) {
     const sizeFromHeaders   = parseTotalBytesFromFetchHeaders(fetchResult);
     const sizeFromSelection = Number.isFinite(Number(selection?.fileSizeBytes))
         ? Math.max(0, Math.trunc(Number(selection.fileSizeBytes))) : 0;
     const logicalFileSizeBytes = sizeFromHeaders > 0 ? sizeFromHeaders : sizeFromSelection;
-    const contextLength  = extractContextLengthFromPrefix(prefixBytes);
-    const splitInfo      = parseGgufSplitInfo(prefixBytes);
+    const contextLength  = extractContextLengthFromMetadata(parsedMetadata);
+    const splitInfo      = extractSplitInfoFromMetadata(parsedMetadata);
     // Preserve the original HF filename so shard naming is intact when mounting.
     const originalFileName = String(selection?.file || '').split('/').filter(Boolean).pop() || 'model.gguf';
 
@@ -186,34 +395,18 @@ export async function runFitFromPreparedPrefix(client, preparedFit, predictInput
     };
 }
 
-// ---------------------------------------------------------------------------
-// Internal helper -- concatenate two Uint8Arrays without extra copies.
-// ---------------------------------------------------------------------------
-function concatBytes(a, b) {
-    if (a.byteLength === 0) return b;
-    if (b.byteLength === 0) return a;
-    const out = new Uint8Array(a.byteLength + b.byteLength);
-    out.set(a, 0);
-    out.set(b, a.byteLength);
-    return out;
-}
-
 /**
- * Progressively fetch HF file prefix bytes and parse GGUF metadata until
- * the parser is satisfied or we exhaust the range plan.
- *
- * Each iteration fetches ONLY the new bytes for that step (the plan now
- * returns incremental ranges). Bytes are accumulated in memory so the WASM
- * parser always receives the full prefix from byte 0.
+ * Parse Hugging Face-hosted GGUF metadata using @huggingface/gguf, then fetch
+ * exactly the raw header bytes needed for the later mounted-file fit path.
  *
  * @param {object} client - predictor worker client
  * @param {object} selection - { repo, file, revision, token, resolvedUrl, ... }
  * @param {object} opts
- * @param {{ initial: number, max: number, step: number }} opts.rangeConfig
- * @param {(prefixByteCount: number) => object} opts.buildMetadataRequest
  * @param {{ log: Function, error: Function }} [opts.logger]
  */
-export async function runHfMetadataFromBrowser(client, selection, { rangeConfig, buildMetadataRequest, logger }) {
+export async function runHfMetadataFromBrowser(client, selection, { logger }) {
+    void client;
+
     const resolvedUrl  = (selection?.resolvedUrl || '').trim();
     const canonicalUrl = buildCanonicalHfFileUrl(selection || {});
 
@@ -221,7 +414,6 @@ export async function runHfMetadataFromBrowser(client, selection, { rangeConfig,
         return { ok: false, source: 'huggingface', error: 'invalid_huggingface_model_descriptor' };
     }
 
-    const plan = buildHfRangePlan(rangeConfig.initial, rangeConfig.max, rangeConfig.step);
     const candidateUrls = [];
     if (resolvedUrl) candidateUrls.push(resolvedUrl);
     if (canonicalUrl && canonicalUrl !== resolvedUrl) candidateUrls.push(canonicalUrl);
@@ -230,104 +422,48 @@ export async function runHfMetadataFromBrowser(client, selection, { rangeConfig,
         repo: selection?.repo || '',
         file: selection?.file || '',
         candidateUrls,
-        plan,
     });
 
     let lastFailure = {
-        ok: false, source: 'huggingface', error: 'hf_range_fetch_failed', detail: 'no_candidate_urls',
+        ok: false, source: 'huggingface', error: 'hf_metadata_parse_failed', detail: 'no_candidate_urls',
     };
 
     for (let ci = 0; ci < candidateUrls.length; ci++) {
         const requestUrl = candidateUrls[ci];
-        const includeAuth = requestUrl.startsWith('https://huggingface.co/');
-        const requests = [];
-        const attempts = [];
-        let lastErrorResponse = null;
-        let fetchFailure = null;
-        let accumulatedBytes = new Uint8Array(0);
-        let lastFetchResult = null;
-
-        for (let ai = 0; ai < plan.length; ai++) {
-            const range = plan[ai];
-            requests.push({
-                url: requestUrl,
-                start: range.start,
-                end: range.end,
-                headers: [
-                    { name: 'Range',  value: `bytes=${range.start}-${range.end}` },
-                    { name: 'Accept', value: 'application/octet-stream' },
-                    ...(includeAuth && (selection?.token || '').trim()
-                        ? [{ name: 'Authorization', value: 'Bearer ***' }] : []),
-                ],
-            });
-
-            let fetchResult;
-            try {
-                fetchResult = await fetchHfPrefixBytes(
-                    requestUrl, range.start, range.end,
-                    selection?.token || '', includeAuth,
-                );
-            } catch (error) {
-                logger?.error('hf.browserMetadata.fetch.error', { ai, error: error?.message ?? String(error) });
-                fetchFailure = {
-                    ok: false, source: 'huggingface', error: 'hf_range_fetch_failed',
-                    detail: error?.message ?? String(error), resolvedUrl: requestUrl, requests, attempts,
-                };
-                break;
-            }
-
-            // Accumulate: only new bytes are received per step.
-            accumulatedBytes = concatBytes(accumulatedBytes, fetchResult.bytes);
-            lastFetchResult  = fetchResult;
-
-            const localRequest = buildMetadataRequest(accumulatedBytes.byteLength);
-            const localFile = new File(
-                [accumulatedBytes],
-                `hf_prefix_${accumulatedBytes.byteLength}.gguf`,
-                { type: 'application/octet-stream' },
+        try {
+            const {
+                parsed,
+                requests,
+                attempts,
+                prefixFetchResult,
+                prefixBytes,
+                metadataResponse,
+            } = await parseRemoteGguf(selection, requestUrl, logger);
+            const effectiveUrl = prefixFetchResult.finalUrl || requestUrl;
+            const prepared = buildPreparedHfFitResult(
+                selection,
+                effectiveUrl,
+                requests,
+                attempts,
+                prefixBytes,
+                prefixFetchResult,
+                metadataResponse,
+                parsed?.metadata,
             );
-            const response = await client.predictMountedJson(localFile, localRequest);
-
-            attempts.push({
-                ai, start: range.start, end: range.end,
-                fetchedChunkBytes: fetchResult.bytes.byteLength,
-                totalAccumulatedBytes: accumulatedBytes.byteLength,
-                httpStatus: fetchResult.httpStatus,
-                finalUrl:   fetchResult.finalUrl,
-                contentRange: fetchResult.contentRange,
-                parserOk:   response?.ok === true,
-                parserError: response?.error || '',
-                minimumRequiredBytes: response?.minimumRequiredBytes || 0,
-                bytesConsumed: response?.metadata?.bytesConsumed || 0,
+            return fetchShardHeadersIfNeeded(prepared, selection, logger);
+        } catch (error) {
+            lastFailure = {
+                ok: false,
+                source: 'huggingface',
+                error: 'hf_metadata_parse_failed',
+                detail: error?.message ?? String(error),
+                resolvedUrl: requestUrl,
+            };
+            logger?.error('hf.browserMetadata.parse.error', {
+                requestUrl,
+                error: lastFailure.detail,
             });
-
-            if (response?.ok === true) {
-                logger?.log('hf.browserMetadata.success', {
-                    ai, totalBytes: accumulatedBytes.byteLength,
-                });
-                const prepared = buildPreparedHfFitResult(
-                    selection, requestUrl, requests, attempts,
-                    accumulatedBytes, lastFetchResult, response,
-                );
-                return fetchShardHeadersIfNeeded(prepared, selection, logger);
-            }
-
-            lastErrorResponse = response;
-            if (response?.error !== 'insufficient_prefix_bytes') {
-                logger?.error('hf.browserMetadata.nonPrefixError', { ai, response });
-                return { ...response, source: 'huggingface', resolvedUrl: requestUrl, requests, attempts };
-            }
         }
-
-        if (fetchFailure != null) { lastFailure = fetchFailure; continue; }
-
-        lastFailure = {
-            ok: false, source: 'huggingface',
-            error: lastErrorResponse?.error || 'insufficient_prefix_bytes',
-            detail: '',
-            minimumRequiredBytes: lastErrorResponse?.minimumRequiredBytes || 0,
-            resolvedUrl: requestUrl, requests, attempts,
-        };
     }
 
     logger?.error('hf.browserMetadata.failed', lastFailure);
@@ -342,12 +478,10 @@ export async function runHfMetadataFromBrowser(client, selection, { rangeConfig,
  * @param {object} selection
  * @param {object} predictInput
  * @param {object} opts
- * @param {{ initial: number, max: number, step: number }} opts.rangeConfig
- * @param {(prefixByteCount: number) => object} opts.buildMetadataRequest
  * @param {(preparedFit: object) => void} opts.onPreparedFit  callback to cache the prepared fit in app state
  * @param {{ log: Function, error: Function }} [opts.logger]
  */
-export async function runHfFitFromBrowser(client, selection, predictInput, { rangeConfig, buildMetadataRequest, onPreparedFit, logger }) {
+export async function runHfFitFromBrowser(client, selection, predictInput, { onPreparedFit, logger }) {
     const resolvedUrl  = (selection?.resolvedUrl || '').trim();
     const canonicalUrl = buildCanonicalHfFileUrl(selection || {});
 
@@ -355,7 +489,6 @@ export async function runHfFitFromBrowser(client, selection, predictInput, { ran
         return { ok: false, source: 'huggingface', error: 'invalid_huggingface_model_descriptor' };
     }
 
-    const plan = buildHfRangePlan(rangeConfig.initial, rangeConfig.max, rangeConfig.step);
     const candidateUrls = [];
     if (resolvedUrl) candidateUrls.push(resolvedUrl);
     if (canonicalUrl && canonicalUrl !== resolvedUrl) candidateUrls.push(canonicalUrl);
@@ -363,113 +496,60 @@ export async function runHfFitFromBrowser(client, selection, predictInput, { ran
     logger?.log('hf.browserFit.start', {
         repo: selection?.repo || '',
         file: selection?.file || '',
-        candidateUrls, plan, predictInput,
+        candidateUrls, predictInput,
     });
 
     let lastFailure = {
-        ok: false, source: 'huggingface', error: 'hf_range_fetch_failed', detail: 'no_candidate_urls',
+        ok: false, source: 'huggingface', error: 'hf_metadata_parse_failed', detail: 'no_candidate_urls',
     };
 
     for (let ci = 0; ci < candidateUrls.length; ci++) {
         const requestUrl = candidateUrls[ci];
-        const includeAuth = requestUrl.startsWith('https://huggingface.co/');
-        const requests = [];
-        const attempts = [];
-        let lastErrorResponse = null;
-        let fetchFailure = null;
-        let accumulatedBytes = new Uint8Array(0);
-        let lastFetchResult = null;
+        try {
+            const {
+                parsed,
+                requests,
+                attempts,
+                prefixFetchResult,
+                prefixBytes,
+                metadataResponse,
+            } = await parseRemoteGguf(selection, requestUrl, logger);
 
-        for (let ai = 0; ai < plan.length; ai++) {
-            const range = plan[ai];
-            requests.push({
-                url: requestUrl,
-                start: range.start,
-                end: range.end,
-                headers: [
-                    { name: 'Range',  value: `bytes=${range.start}-${range.end}` },
-                    { name: 'Accept', value: 'application/octet-stream' },
-                    ...(includeAuth && (selection?.token || '').trim()
-                        ? [{ name: 'Authorization', value: 'Bearer ***' }] : []),
-                ],
-            });
-
-            let fetchResult;
-            try {
-                fetchResult = await fetchHfPrefixBytes(
-                    requestUrl, range.start, range.end,
-                    selection?.token || '', includeAuth,
-                );
-            } catch (error) {
-                logger?.error('hf.browserFit.fetch.error', { ai, error: error?.message ?? String(error) });
-                fetchFailure = {
-                    ok: false, source: 'huggingface', error: 'hf_range_fetch_failed',
-                    detail: error?.message ?? String(error), resolvedUrl: requestUrl, requests, attempts,
-                };
-                break;
-            }
-
-            accumulatedBytes = concatBytes(accumulatedBytes, fetchResult.bytes);
-            lastFetchResult  = fetchResult;
-
-            const localRequest = buildMetadataRequest(accumulatedBytes.byteLength);
-            const metadataFile = new File(
-                [accumulatedBytes],
-                `hf_prefix_${accumulatedBytes.byteLength}.gguf`,
-                { type: 'application/octet-stream' },
+            let preparedFit = buildPreparedHfFitResult(
+                selection,
+                prefixFetchResult.finalUrl || requestUrl,
+                requests,
+                attempts,
+                prefixBytes,
+                prefixFetchResult,
+                metadataResponse,
+                parsed?.metadata,
             );
-            const metadataResponse = await client.predictMountedJson(metadataFile, localRequest);
+            preparedFit = await fetchShardHeadersIfNeeded(preparedFit, selection, logger);
+            onPreparedFit?.(preparedFit);
 
-            attempts.push({
-                ai, start: range.start, end: range.end,
-                fetchedChunkBytes: fetchResult.bytes.byteLength,
-                totalAccumulatedBytes: accumulatedBytes.byteLength,
-                httpStatus: fetchResult.httpStatus,
-                finalUrl:   fetchResult.finalUrl,
-                contentRange: fetchResult.contentRange,
-                parserOk:   metadataResponse?.ok === true,
-                parserError: metadataResponse?.error || '',
-                minimumRequiredBytes: metadataResponse?.minimumRequiredBytes || 0,
-                bytesConsumed: metadataResponse?.metadata?.bytesConsumed || 0,
+            logger?.log('hf.browserFit.fit.start', {
+                fitFileBytes: preparedFit.prefixBytes.byteLength,
+                logicalFileSizeBytes: preparedFit.logicalFileSizeBytes,
+                shardCount: preparedFit.shardHeaders?.length ?? 0,
             });
 
-            if (metadataResponse?.ok === true) {
-                let preparedFit = buildPreparedHfFitResult(
-                    selection, requestUrl, requests, attempts,
-                    accumulatedBytes, lastFetchResult, metadataResponse,
-                );
-                // Fetch remaining shard headers in parallel before caching so
-                // the cached preparedFit already has shardHeaders populated.
-                preparedFit = await fetchShardHeadersIfNeeded(preparedFit, selection, logger);
-                onPreparedFit?.(preparedFit);
-
-                logger?.log('hf.browserFit.fit.start', {
-                    ai, fitFileBytes: preparedFit.prefixBytes.byteLength,
-                    logicalFileSizeBytes: preparedFit.logicalFileSizeBytes,
-                    shardCount: preparedFit.shardHeaders?.length ?? 0,
-                });
-
-                const fitResponse = await runFitFromPreparedPrefix(client, preparedFit, predictInput, logger);
-                logger?.log('hf.browserFit.fit.done', { ai, ok: fitResponse?.ok });
-                return fitResponse;
-            }
-
-            lastErrorResponse = metadataResponse;
-            if (metadataResponse?.error !== 'insufficient_prefix_bytes') {
-                logger?.error('hf.browserFit.nonPrefixError', { ai, response: metadataResponse });
-                return { ...metadataResponse, source: 'huggingface', resolvedUrl: requestUrl, requests, attempts };
-            }
+            const fitResponse = await runFitFromPreparedPrefix(client, preparedFit, predictInput, logger);
+            logger?.log('hf.browserFit.fit.done', { ok: fitResponse?.ok });
+            return fitResponse;
+        } catch (error) {
+            lastFailure = {
+                ok: false,
+                source: 'huggingface',
+                error: 'hf_metadata_parse_failed',
+                detail: error?.message ?? String(error),
+                resolvedUrl: requestUrl,
+            };
+            logger?.error('hf.browserFit.parse.error', {
+                requestUrl,
+                error: lastFailure.detail,
+            });
         }
-
-        if (fetchFailure != null) { lastFailure = fetchFailure; continue; }
-
-        lastFailure = {
-            ok: false, source: 'huggingface',
-            error: lastErrorResponse?.error || 'insufficient_prefix_bytes',
-            detail: '',
-            minimumRequiredBytes: lastErrorResponse?.minimumRequiredBytes || 0,
-            resolvedUrl: requestUrl, requests, attempts,
-        };
     }
 
     logger?.error('hf.browserFit.failed', lastFailure);

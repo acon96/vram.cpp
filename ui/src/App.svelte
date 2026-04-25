@@ -19,7 +19,6 @@
     const appView            = new URLSearchParams(window.location.search).get('view') ?? 'app';
     const isJsonHarnessView  = appView === 'harness';
 
-    const hfRangeConfig = { initial: 2 * 1024 * 1024, max: 16 * 1024 * 1024, step: 2 * 1024 * 1024 };
     const hardwareConfigStorageKey = 'vram_cpp_hardware_config_v1';
 
     globalThis.__VRAM_DEBUG__ = wasmDebugEnabled;
@@ -155,16 +154,6 @@
     });
 
     // ── Predict input builders ────────────────────────────────────────────────
-    function buildMetadataRequest(prefixByteCount) {
-        return {
-            mode: 'metadata',
-            model: { source: 'local', path: '__MOUNTED_MODEL__' },
-            runtime: { n_ctx: params.nCtx, cache_type_k: params.cacheTypeK, cache_type_v: params.cacheTypeV },
-            device: { host_ram_bytes: giBToBytes(params.hostRamGiB) },
-            fetch: { initial_bytes: prefixByteCount, max_bytes: prefixByteCount, growth_factor: 2.0 },
-        };
-    }
-
     function buildPredictFitInput() {
         const gpus = params.gpus.map((g, i) => {
             const name = typeof g.name === 'string' ? g.name.trim() : '';
@@ -195,9 +184,7 @@
     // ── HF validate (metadata-only pass) ────────────────────────────────────
     async function validateHfSelection(selection) {
         const client = await initPredictorWorker({ wasmJsUrl, debugEnabled: wasmDebugEnabled });
-        const response = await runHfMetadataFromBrowser(client, selection, {
-            rangeConfig: hfRangeConfig, buildMetadataRequest, logger,
-        });
+        const response = await runHfMetadataFromBrowser(client, selection, { logger });
         if (response?.ok === true && response?.prefixBytes instanceof Uint8Array) {
             hfPreparedFit = response;
             if (Number.isFinite(Number(response.contextLength)) && Number(response.contextLength) > 0) {
@@ -267,8 +254,6 @@
                 const res = hasCached
                     ? await runFitFromPreparedPrefix(client, hfPreparedFit, predictInput, logger)
                     : await runHfFitFromBrowser(client, hfSelection, predictInput, {
-                        rangeConfig: hfRangeConfig,
-                        buildMetadataRequest,
                         onPreparedFit: (pf) => { hfPreparedFit = pf; },
                         logger,
                     });
@@ -390,7 +375,7 @@
     </main>
 
     <footer class="app-footer">
-        <span>Powered by <a href="https://github.com/ggml-org/llama.cpp" target="_blank" rel="noreferrer">llama.cpp</a> fit logic compiled to WebAssembly.</span>
+        <span>Powered by <a href="https://github.com/ggml-org/llama.cpp" target="_blank" rel="noreferrer">llama.cpp</a> compiled to WebAssembly.</span>
     </footer>
 </div>
 

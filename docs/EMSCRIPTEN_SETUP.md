@@ -29,7 +29,7 @@ Then open a new terminal (or run `source ~/.zprofile`).
 
 ```bash
 source ~/emsdk/emsdk_env.sh
-emcmake cmake -S . -B build-wasm -DVRAM_ENABLE_VENDOR_LLAMA=OFF -DVRAM_BUILD_TESTS=OFF
+emcmake cmake -S . -B build-wasm -DVRAM_BUILD_TESTS=OFF
 cmake --build build-wasm
 ```
 

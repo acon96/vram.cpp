@@ -5,10 +5,7 @@
 extern "C" {
 #endif
 
-// Returns static JSON with build/system information.
-const char * vram_predictor_get_system_info_json(void);
-
-// Phase-0 stub: accepts request JSON and returns a structured placeholder response.
+// accepts request JSON and returns the fitted prediction result
 const char * vram_predictor_predict_json(const char * request_json);
 
 #ifdef __cplusplus

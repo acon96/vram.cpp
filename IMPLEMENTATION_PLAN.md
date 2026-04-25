@@ -280,6 +280,9 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel (cuda, metal, vulkan, etc.)
   - [ ] Add hard coded profiles for common GPUs with total memory and backend profile presets
 18. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
+  - [ ] Create an initial "unified" build process that builds the wasm module and packages the bundle with the UI for static hosting; likely some sort of vite build plugin
+  - [ ] create a GitHub actions pipeline that runs the build process whenever there is a push to the main branch; should publish the built app to a GitHub Pages site using the pre-built action
+  - [ ] Add a nightly workflow that checks for new commits to the llama.cpp repo, and if it detects any, updates the submodule commit reference and pushes a commit to the main branch to trigger a rebuild and redeploy of the app with the latest llama.cpp changes.
 
 ### Fixes needed:
 - [x] de-duplicate the "Target Free MiB", "Fit target (MiB)" and the "Free VRAM" parameters in the gpu device section. 
@@ -296,19 +299,21 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - probably need to detect the number of iterations the fit algorithm has gone through and show "Fitting... (attempt ##)" below the spinner
   - also probably should allow cancelling the fit attempt if it's taking too long or the user wants to adjust parameters and try again. this would involve adding a cancellation mechanism to the API and the wasm worker, and then adding a "Cancel" button in the UI that triggers it.
 - [ ] Add support for split modes (layer, row, tensor) and other llama.cpp knobs that affect memory allocation/usage
-- [ ] HuggingFace gguf "validate" button should show all the individual sub-steps in the hint text box so it doesn't look like it "froze"
+- [ ] Disable as much of the remaining llama.cpp build as possible to reduce the wasm binary size
 
 ### Cleanup:
-- [ ] Remove the `web/` folder and move the wasm helper and worker files into `ui/lib/` since they are only used by the UI and not shared with any other potential consumers of the wasm module. the smoke test can be deleted
-- [ ] replace all the custom gguf parsing code with @huggingface/gguf because it can already handle remote ggufs stored on HuggingFace with built in support for range requests, and it will be more robust and better maintained than a custom implementation. just need to make sure it supports retrieving the raw bytes of the metadata without trying to fetch the whole file, which it should be able to do since it already supports range requests.
+- [x] Remove the `web/` folder and move the wasm helper and worker files into `ui/lib/` since they are only used by the UI and not shared with any other potential consumers of the wasm module. the smoke test can be deleted
+- [x] replace all the custom gguf parsing code with @huggingface/gguf because it can already handle remote ggufs stored on HuggingFace with built in support for range requests, and it will be more robust and better maintained than a custom implementation. just need to make sure it supports retrieving the raw bytes of the metadata without trying to fetch the whole file, which it should be able to do since it already supports range requests.
+    - browser-side HF metadata now uses `@huggingface/gguf`, and native/local metadata now goes through vendored GGUF/ggml readers instead of the removed custom parser.
+    - HuggingFace gguf "validate" button should show all the individual sub-steps in the hint text box so it doesn't look like it "froze"
+- [x] reduce the number of "build targets" for the cpp part of the project. 
+  - there shouldn't be the ability to build **without** llama.cpp vendored in. unit testing against the core logic without llama.cpp doesn't help a ton since the main point of the project is to run the actual llama-fit code in wasm or native.
+  - removed the old optional-vendor CMake path and the related `VRAM_ENABLE_VENDOR_LLAMA` / `VRAM_HAS_LLAMA_FIT_EXECUTION` compatibility branches.
 - [ ] Work through the entire codebase and find any unnecessary complications in the arguments, responses, and API surfaces. 
   - The goal would be to remove extra logic and handling for scenarios that don't exist in the codebase.
   - Basically a reverse YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.
   - If there are any response fields that are calculated but not actually returned or used by the UI, those should be removed as well.
   - The idea is to have a clean and minimal codebase that only includes what is actually needed for the app to function, without extra noise or complexity from unused features or hypothetical scenarios.
-- [ ] reduce the number of "build targets" for the cpp part of the project. 
-  - there shouldn't be the ability to build **without** llama.cpp vendored in. unit testing against the core logic without llama.cpp doesn't help a ton since the main point of the project is to run the actual llama-fit code in wasm or native.
-  - the c++ code also needs to be cleaned up to remove the preprocessor macros that handled the non-vendor build targets (i.e. `VRAM_ENABLE_VENDOR_LLAMA`)
 
 ## 10. Change Log
 
@@ -336,6 +341,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Began replacing fit-mode planning-only API responses with in-process execution wiring so the exported predictor API can directly consume the override-capable llama/common path.
 - 2026-04-23: Added a browser-side wasm helper that mounts local model bytes into the Emscripten FS and issues `fit.execute_in_process` requests against the vendor-enabled predictor module.
 - 2026-04-23: Added post-fit model/context instantiation inside the in-process API executor so fit responses now include detailed device and host model/context/compute breakdowns in both vendor-native and vendor-wasm builds.
+- 2026-04-25: Removed the legacy custom C++ GGUF prefix parser, switched local metadata loading to vendored GGUF/ggml APIs, and made vendored llama.cpp mandatory across native and wasm builds.
 - 2026-04-23: Added explicit `fit.execute_in_process` API execution, validated it in a vendor-enabled native test path, and produced a successful vendor-enabled Emscripten build after aligning the predictor target with llama.cpp's wasm64 configuration.
 - 2026-04-24: Scaffolded Svelte 5 + Vite UI in `ui/` with FileUpload, ParamPanel, and ResultsTable components wired to the WASM predictor bridge; verified clean production build.
 - 2026-04-24: Switched UI wasm asset wiring to a URL-driven model (`VITE_WASM_BASE_URL`) with a dedicated CORS-enabled local assets server so Vite dev can run against in-place build artifacts on a separate port.
@@ -349,3 +355,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-24: Updated `n_gpu_layers` input parsing in the Svelte parameter panel to reliably preserve `-1` and clamp invalid values.
 - 2026-04-24: Added Hugging Face repo search + GGUF file selection UI, integrated metadata validation/submission flow through the WASM worker predictor API, and surfaced metadata responses in the results panel.
 - 2026-04-24: Addressed UI tweaks and bug fixes: deduplicated fit-target params into per-GPU bufferMiB, trimmed KV cache type options to f16/q8_0/q4_0, fixed split GGUF filename mounting, auto-assigned device index from position, collapsed metadata preview behind toggle button, restructured layout into Model+Runtime row and Hardware Config row (split ParamPanel into RuntimePanel + HardwarePanel).
+- 2026-04-25: Moved the browser helper into `ui/src/lib`, removed the old `web/` smoke harness, and switched the browser Hugging Face metadata parse flow to `@huggingface/gguf` while fetching only the exact stub-prefix bytes needed for wasm fit mounting.

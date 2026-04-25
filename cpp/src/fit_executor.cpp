@@ -7,14 +7,12 @@
 #include <string>
 #include <vector>
 
-#if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
 #include "llama.h"
 #include "llama-ext.h"
 
 #include "common.h"
 #include "fit.h"
 #include "log.h"
-#endif
 
 namespace vram {
 namespace {
@@ -54,8 +52,6 @@ uint64_t saturating_add_u64(uint64_t a, uint64_t b) {
     }
     return a + b;
 }
-
-#if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
 
 struct fit_memory_row_bytes {
     uint64_t total = 0;
@@ -340,25 +336,14 @@ void fill_breakdown_fallback(
         result.host.total_mib = std::max(host_total, host_free);
     }
 }
-#endif
 
 } // namespace
 
 bool fit_execution_available() {
-#if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
     return true;
-#else
-    return false;
-#endif
 }
 
 bool execute_fit_request(const fit_execution_request & request, fit_execution_result & result, std::string & error) {
-#if !defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
-    (void) request;
-    (void) result;
-    error = "fit_execution_unavailable_in_this_build";
-    return false;
-#else
     std::string phase = "initialization";
     int original_common_log_verbosity = 0;
     bool common_log_verbosity_overridden = false;
@@ -594,7 +579,6 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
         error = "fit_execution_exception[" + phase + "]: unknown_exception";
         return false;
     }
-#endif
 }
 
 } // namespace vram

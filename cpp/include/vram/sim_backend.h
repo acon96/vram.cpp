@@ -7,9 +7,7 @@
 #include <string>
 #include <vector>
 
-#if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
 #include "ggml-backend.h"
-#endif
 
 namespace vram {
 
@@ -46,10 +44,7 @@ public:
     size_t device_count() const;
     const sim_device_spec & spec(size_t index) const;
     const std::vector<sim_device_spec> & specs() const;
-
-#if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
     ggml_backend_dev_t * devices();
-#endif
 
 private:
     struct impl;

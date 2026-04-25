@@ -10,40 +10,45 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(VRAM_BUILD_WASM "Build the WebAssembly predictor target" ON)
-option(VRAM_ENABLE_VENDOR_LLAMA "Configure vendor/llama-cpp as an external subproject" OFF)
 option(VRAM_BUILD_TESTS "Build local unit tests" ON)
-option(VRAM_BUILD_FIT_HARNESS "Build native in-process llama-fit harness (requires vendor llama enabled)" ON)
 
-if(EMSCRIPTEN AND VRAM_ENABLE_VENDOR_LLAMA)
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/CMakeLists.txt")
+    message(FATAL_ERROR "vendor/llama-cpp is required for all builds")
+endif()
+
+if(EMSCRIPTEN)
     add_compile_options("-fexceptions")
     add_compile_options("-sMEMORY64=1")
     add_link_options("-sNO_DISABLE_EXCEPTION_CATCHING")
     add_link_options("-sMEMORY64=1")
 endif()
 
-if(VRAM_ENABLE_VENDOR_LLAMA AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/CMakeLists.txt")
-    # Keep llama.cpp available for future linking while avoiding full builds by default.
-    set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build llama common library" FORCE)
-    add_subdirectory(vendor/llama-cpp EXCLUDE_FROM_ALL)
+# Keep llama.cpp available for future linking while avoiding full builds by default.
+set(LLAMA_BUILD_COMMON ON CACHE BOOL "Build llama common library" FORCE)
+add_subdirectory(vendor/llama-cpp EXCLUDE_FROM_ALL)
 
-    if(EMSCRIPTEN AND TARGET llama-common)
-        # Keep llama/common fit logging on a synchronous path in wasm builds.
-        # The default logger path can try to spawn a worker thread, which is not
-        # available in the non-pthreads browser build used here.
-        target_compile_definitions(llama-common PRIVATE VRAM_EMSCRIPTEN_SYNC_FIT_LOGS=1)
-    endif()
+if(EMSCRIPTEN AND TARGET llama-common)
+    # Keep llama/common fit logging on a synchronous path in wasm builds.
+    # The default logger path can try to spawn a worker thread, which is not
+    # available in the non-pthreads browser build used here.
+    target_compile_definitions(llama-common PRIVATE VRAM_EMSCRIPTEN_SYNC_FIT_LOGS=1)
 endif()
 
 add_library(vram_predictor_core STATIC
     cpp/src/predictor_api.cpp
     cpp/src/fit_executor.cpp
     cpp/src/sim_backend.cpp
-    cpp/src/gguf_prefix_parser.cpp
 )
 
 target_include_directories(vram_predictor_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/src
 )
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/vendor/nlohmann/json.hpp")
@@ -53,30 +58,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/vendor/nlohmann/json.hpp
     )
 endif()
 
-if(VRAM_ENABLE_VENDOR_LLAMA)
-    target_compile_definitions(vram_predictor_core
-        PRIVATE
-            VRAM_HAS_LLAMA_FIT_EXECUTION=1
-    )
+target_link_libraries(vram_predictor_core
+    PRIVATE
+        llama-common
+        llama
+        Threads::Threads
+)
 
-    target_include_directories(vram_predictor_core
-        PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/common
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/include
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/src
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/include
-            ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/ggml/src
-    )
-
-    target_link_libraries(vram_predictor_core
-        PRIVATE
-            llama-common
-            llama
-            Threads::Threads
-    )
-endif()
-
-if(VRAM_ENABLE_VENDOR_LLAMA AND VRAM_BUILD_FIT_HARNESS AND NOT EMSCRIPTEN)
+if(VRAM_BUILD_FIT_HARNESS AND NOT EMSCRIPTEN)
     add_executable(vram_fit_harness
         cpp/tools/vram_fit_harness.cpp
     )
@@ -106,7 +95,7 @@ if(EMSCRIPTEN AND VRAM_BUILD_WASM)
         "-sENVIRONMENT=web,worker"
         "-sMODULARIZE=1"
         "-sEXPORT_NAME=createVRAMPredictorModule"
-        "-sEXPORTED_FUNCTIONS=['_malloc','_free','_vram_predictor_get_system_info_json','_vram_predictor_predict_json']"
+        "-sEXPORTED_FUNCTIONS=['_malloc','_free','_vram_predictor_predict_json']"
         "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS']"
     )
 else()
@@ -123,17 +112,6 @@ endif()
 if(VRAM_BUILD_TESTS)
     include(CTest)
     if(BUILD_TESTING)
-        add_executable(vram_parser_tests
-            cpp/tests/parser_tests.cpp
-        )
-
-        target_link_libraries(vram_parser_tests
-            PRIVATE
-                vram_predictor_core
-        )
-
-        add_test(NAME vram_parser_tests COMMAND vram_parser_tests)
-
         add_executable(vram_api_tests
             cpp/tests/predictor_api_tests.cpp
         )
@@ -160,17 +138,15 @@ if(VRAM_BUILD_TESTS)
             add_dependencies(vram_llama_fit_parity_tests vram_fit_harness)
         endif()
 
-        if(VRAM_ENABLE_VENDOR_LLAMA)
-            add_executable(vram_api_fit_execution_tests
-                cpp/tests/predictor_api_fit_execution_tests.cpp
-            )
+        add_executable(vram_api_fit_execution_tests
+            cpp/tests/predictor_api_fit_execution_tests.cpp
+        )
 
-            target_link_libraries(vram_api_fit_execution_tests
-                PRIVATE
-                    vram_predictor_core
-            )
+        target_link_libraries(vram_api_fit_execution_tests
+            PRIVATE
+                vram_predictor_core
+        )
 
-            add_test(NAME vram_api_fit_execution_tests COMMAND vram_api_fit_execution_tests)
-        endif()
+        add_test(NAME vram_api_fit_execution_tests COMMAND vram_api_fit_execution_tests)
     endif()
 endif()

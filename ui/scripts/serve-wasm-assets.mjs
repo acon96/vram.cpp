@@ -12,8 +12,7 @@ const host = process.env.WASM_ASSETS_HOST ?? '127.0.0.1';
 const port = Number.parseInt(process.env.WASM_ASSETS_PORT ?? '8123', 10);
 const mountPath = normalizeMountPath(process.env.WASM_ASSETS_PATH ?? '/assets');
 
-const wasmBuildDir = path.resolve(repoRoot, process.env.WASM_BUILD_DIR ?? 'build-wasm-vendor');
-const browserHelperPath = path.resolve(repoRoot, process.env.WASM_HELPER_PATH ?? 'web/vram_predictor_browser.js');
+const wasmBuildDir = path.resolve(repoRoot, process.env.WASM_BUILD_DIR ?? 'build-wasm');
 
 if (!Number.isFinite(port) || port <= 0 || port > 65535) {
     throw new Error(`Invalid WASM_ASSETS_PORT value: ${process.env.WASM_ASSETS_PORT ?? '(unset)'}`);
@@ -22,7 +21,6 @@ if (!Number.isFinite(port) || port <= 0 || port > 65535) {
 const routeToFile = {
     [`${mountPath}/vram_predictor_wasm.js`]: path.join(wasmBuildDir, 'vram_predictor_wasm.js'),
     [`${mountPath}/vram_predictor_wasm.wasm`]: path.join(wasmBuildDir, 'vram_predictor_wasm.wasm'),
-    [`${mountPath}/vram_predictor_browser.js`]: browserHelperPath,
 };
 
 function normalizeMountPath(inputPath) {
@@ -106,7 +104,6 @@ server.listen(port, host, () => {
     const baseUrl = `http://${host}:${port}${mountPath}`;
     console.log(`[assets] serving VRAM wasm assets at ${baseUrl}`);
     console.log(`[assets] wasm build dir: ${path.relative(repoRoot, wasmBuildDir)}`);
-    console.log(`[assets] helper module : ${path.relative(repoRoot, browserHelperPath)}`);
 });
 
 process.on('SIGINT', () => {

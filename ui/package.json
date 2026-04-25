@@ -13,5 +13,8 @@
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "svelte": "^5.55.4",
     "vite": "^8.0.10"
+  },
+  "dependencies": {
+    "@huggingface/gguf": "^0.4.2"
   }
 }

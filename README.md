@@ -9,23 +9,20 @@ This repository currently contains Phase 0 + early Phase 2 scaffolding:
 - JSON schemas for predictor request/response
 - C ABI surface for JS/WASM interop
 - Emscripten target skeleton exporting predictor entrypoints
-- Submodule vendoring for llama.cpp in `vendor/llama-cpp`
-- GGUF prefix parser prototype for partial metadata extraction
+- Vendored llama.cpp integration in `vendor/llama-cpp`
 - HF progressive prefix range planning helper
 - HF URL resolver for direct model-file range requests
-- HF range execution backend (browser fetch in wasm, curl fallback in native)
-- Local predictor API path that progressively parses GGUF prefixes from disk
+- Browser-side HF metadata parsing via `@huggingface/gguf`
+- Local predictor API metadata loading via vendored GGUF/ggml readers
 - Native in-process llama-fit harness (`vram_fit_harness`) linked against llama/common libraries
-- Vendored llama/common fit patch for explicit device/host memory overrides during fitting
-- Predictor API fit execution path behind explicit `fit.execute_in_process` opt-in when built with vendor llama support
 - In-process fit responses now include detailed device/host model, context, and compute breakdowns
 - Browser-side wasm helper for mounting local files and calling `fit.execute_in_process`
-- Unit tests for parser/range behavior and predictor API integration
+- Focused predictor API and fit execution integration tests
 
 ## Build (native dev smoke check)
 
 ```bash
-cmake -S . -B build -DVRAM_ENABLE_VENDOR_LLAMA=OFF
+cmake -S . -B build
 cmake --build build
 ./build/vram_predictor_dev
 ctest --test-dir build --output-on-failure
@@ -40,15 +37,8 @@ source ~/emsdk/emsdk_env.sh
 ```
 
 ```bash
-emcmake cmake -S . -B build-wasm -DVRAM_ENABLE_VENDOR_LLAMA=OFF
-cmake --build build-wasm
-```
-
-Vendor-enabled fit build:
-
-```bash
-emcmake cmake -S . -B build-wasm-vendor -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_TESTS=OFF
-cmake --build build-wasm-vendor
+emcmake cmake -S . -B build-wasm -DVRAM_BUILD_TESTS=OFF
+cmake --build build-wasm --target vram_predictor_wasm -j4
 ```
 
 Detailed setup and troubleshooting: `docs/EMSCRIPTEN_SETUP.md`.
@@ -69,7 +59,7 @@ Expected artifacts:
 Build harness and llama-common stack:
 
 ```bash
-cmake -S . -B build-fit-harness -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_WASM=OFF -DVRAM_BUILD_TESTS=OFF
+cmake -S . -B build-fit-harness -DVRAM_BUILD_WASM=OFF -DVRAM_BUILD_TESTS=OFF
 cmake --build build-fit-harness --target vram_fit_harness -j 8
 ```
 
@@ -126,13 +116,13 @@ In-process fit responses include a `fit.memoryBreakdown` object with per-device 
 Browser-side mounted-file helper:
 
 ```js
-import createVRAMPredictorModule from '../build-wasm-vendor/vram_predictor_wasm.js';
-import { createBrowserPredictorClient } from '../web/vram_predictor_browser.js';
+import createVRAMPredictorModule from '../build-wasm/vram_predictor_wasm.js';
+import { createBrowserPredictorClient } from '../ui/src/lib/vram_predictor_browser.js';
 
 const client = await createBrowserPredictorClient({
 	moduleFactory: createVRAMPredictorModule,
 	moduleOptions: {
-		locateFile: (path) => `../build-wasm-vendor/${path}`,
+		locateFile: (path) => `../build-wasm/${path}`,
 	},
 });
 
@@ -148,4 +138,4 @@ const result = client.predictMountedFit({
 });
 ```
 
-The helper lives at `web/vram_predictor_browser.js` and assumes a vendor-enabled wasm build so the mounted file can be passed directly into the in-process fit path.
+The helper lives at `ui/src/lib/vram_predictor_browser.js` and assumes a vendor-enabled wasm build so the mounted file can be passed directly into the in-process fit path.

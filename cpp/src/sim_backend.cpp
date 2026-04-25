@@ -6,7 +6,6 @@
 #include <limits>
 #include <utility>
 
-#if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
 #include "ggml.h"
 #include "ggml-backend-impl.h"
 
@@ -14,7 +13,6 @@
 
 #if defined(_MSC_VER)
 #include <malloc.h>
-#endif
 #endif
 
 namespace vram {
@@ -66,7 +64,6 @@ bool parse_sim_backend_profile(const std::string & value, sim_backend_profile & 
     return false;
 }
 
-#if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
 namespace {
 
 constexpr size_t k_tensor_alignment = 128;
@@ -638,39 +635,5 @@ ggml_backend_dev_t * sim_backend::devices() {
     }
     return impl_->devices_terminated.data();
 }
-
-#else
-
-struct sim_backend::impl {
-};
-
-sim_backend::sim_backend(std::vector<sim_device_spec> specs)
-    : specs_(std::move(specs)),
-      impl_(nullptr) {
-}
-
-sim_backend::~sim_backend() = default;
-
-sim_backend::sim_backend(sim_backend && other) noexcept = default;
-
-sim_backend & sim_backend::operator=(sim_backend && other) noexcept = default;
-
-bool sim_backend::valid() const {
-    return !specs_.empty();
-}
-
-size_t sim_backend::device_count() const {
-    return specs_.size();
-}
-
-const sim_device_spec & sim_backend::spec(size_t index) const {
-    return specs_.at(index);
-}
-
-const std::vector<sim_device_spec> & sim_backend::specs() const {
-    return specs_;
-}
-
-#endif
 
 } // namespace vram

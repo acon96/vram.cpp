@@ -8,8 +8,8 @@ This UI loads the predictor wasm artifacts from an external assets origin set by
 
 ```bash
 source ~/emsdk/emsdk_env.sh
-cmake -S . -B build-wasm-vendor -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_TESTS=OFF
-cmake --build build-wasm-vendor --target vram_predictor_wasm -j4
+cmake -S . -B build-wasm -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_TESTS=OFF
+cmake --build build-wasm --target vram_predictor_wasm -j4
 ```
 
 2. In `ui/`, start the assets server (defaults to `http://127.0.0.1:8123/assets/`):
@@ -31,7 +31,7 @@ The checked-in [ui/.env.development](.env.development) points Vite dev to `http:
 - `VITE_WASM_BASE_URL`: Full URL or relative path containing:
 	- `vram_predictor_wasm.js`
 	- `vram_predictor_wasm.wasm`
-	- `vram_predictor_browser.js`
+	- `vram_predictor_browser.js` (served from `ui/src/lib/vram_predictor_browser.js` by the local asset server)
 
 - `VITE_DEBUG_WASM`: Set to `1` to force verbose frontend/wasm debug logs in the browser console.
   - In dev mode, debug logs are enabled by default.
@@ -49,8 +49,8 @@ Assets server options:
 - `WASM_ASSETS_HOST` (default `127.0.0.1`)
 - `WASM_ASSETS_PORT` (default `8123`)
 - `WASM_ASSETS_PATH` (default `/assets`)
-- `WASM_BUILD_DIR` (default `build-wasm-vendor`)
-- `WASM_HELPER_PATH` (default `web/vram_predictor_browser.js`)
+- `WASM_BUILD_DIR` (default `build-wasm`)
+- `WASM_HELPER_PATH` (default `ui/src/lib/vram_predictor_browser.js`)
 
 ## GitHub Pages / Production
 

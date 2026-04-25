@@ -141,28 +141,16 @@ function buildPredictRequest(options, modelPath) {
 
     const runtime = {
         n_ctx: nCtx,
+        min_ctx: minCtx,
+        n_batch: nBatch,
+        n_ubatch: nUbatch,
         n_gpu_layers: nGpuLayers,
         cache_type_k: cacheTypeK,
         cache_type_v: cacheTypeV,
     };
 
-    const parsedNBatch = Number(nBatch);
-    const parsedNUbatch = Number(nUbatch);
-
-    if (Number.isFinite(parsedNBatch) && parsedNBatch > 0) {
-        runtime.n_batch = Math.trunc(parsedNBatch);
-    }
-
-    if (Number.isFinite(parsedNUbatch) && parsedNUbatch > 0) {
-        runtime.n_ubatch = Math.trunc(parsedNUbatch);
-    }
-
     return {
-        mode: 'fit',
-        model: {
-            source: 'local',
-            path: modelPath,
-        },
+        model: modelPath,
         runtime,
         device: {
             host_ram_bytes: hostRamBytes,
@@ -170,11 +158,7 @@ function buildPredictRequest(options, modelPath) {
             target_free_mib: targetFreeMiB,
             gpus,
         },
-        fit: {
-            min_ctx: minCtx,
-            execute_in_process: true,
-            show_fit_logs: showFitLogs,
-        },
+        show_fit_logs: showFitLogs,
     };
 }
 
@@ -244,12 +228,6 @@ async function ensureModule(config) {
     });
 
     return modulePromise;
-}
-
-async function handleGetSystemInfo(message) {
-    const module = await ensureModule(message.config);
-    const raw = module.ccall('vram_predictor_get_system_info_json', 'string', [], []);
-    return JSON.parse(raw);
 }
 
 async function handlePredict(message) {
@@ -360,31 +338,26 @@ self.onmessage = async (event) => {
         return;
     }
 
-    if (message.type !== 'predict' && message.type !== 'predict-json' && message.type !== 'get-system-info') {
-        return;
-    }
-
     const jobId = message.jobId;
 
     try {
-        if (message.type === 'get-system-info') {
-            const result = await handleGetSystemInfo(message);
+        if (message.type === 'predict') {
+            const result = await handlePredict(message);
             self.postMessage({
                 type: 'result',
                 jobId,
                 result,
             });
-            return;
+        } else if (message.type === 'predict-json') {
+             const result = await handlePredictJson(message);
+             self.postMessage({
+                 type: 'result',
+                 jobId,
+                 result,
+             });
+        } else {
+            throw new Error(`Unknown message type: ${message.type}`);
         }
-
-        const result = message.type === 'predict-json'
-            ? await handlePredictJson(message)
-            : await handlePredict(message);
-        self.postMessage({
-            type: 'result',
-            jobId,
-            result,
-        });
     } catch (error) {
         self.postMessage({
             type: 'error',

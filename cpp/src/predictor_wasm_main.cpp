@@ -9,18 +9,6 @@
 
 extern "C" {
 
-VRAM_EXPORT const char * vram_predictor_get_system_info_json(void);
 VRAM_EXPORT const char * vram_predictor_predict_json(const char * request_json);
 
 }
-
-#ifndef __EMSCRIPTEN__
-
-#include <cstdio>
-
-int main() {
-    std::puts(vram_predictor_get_system_info_json());
-    return 0;
-}
-
-#endif

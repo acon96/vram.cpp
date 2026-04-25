@@ -1,7 +1,7 @@
 # VRAM Predictor API Reference
 
 This document defines the JSON request and response shapes used by the WASM predictor.
-These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API tests in `cpp/tests/`, and browser helper assumptions in `web/vram_predictor_browser.js`.
+These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API tests in `cpp/tests/`, and browser helper assumptions in `ui/src/lib/vram_predictor_browser.js`.
 
 ---
 
@@ -9,25 +9,15 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
 
 ```json
 {
-  "mode": "metadata" | "fit",
-  "model": {
-    "source": "local" | "huggingface",
-    "path": "<string — local file path or virtual WASM FS path>",
-    "huggingFace": {
-      "repo": "<string>",
-      "file": "<string>",
-      "revision": "<string>",
-      "resolvedUrl": "<string>",
-      "token": "<string>"
-    }
-  },
+  "model": "<string — local file path or virtual WASM FS path>",
   "runtime": {
     "n_ctx": <integer ≥ 1>,
     "n_batch": <integer ≥ 1>,
     "n_ubatch": <integer ≥ 1>,
     "cache_type_k": "<string>",
     "cache_type_v": "<string>",
-    "n_gpu_layers": <integer ≥ -1>
+    "n_gpu_layers": <integer ≥ -1>,
+    "split_mode": "row" | "layer" | "tensor",
   },
   "device": {
     "host_ram_bytes": <integer ≥ 0>,
@@ -44,12 +34,7 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
       }
     ]
   },
-  "fit": {
-    "fit_harness_binary": "<string>",
-    "min_ctx": <integer ≥ 0>,
-    "execute_in_process": <boolean>,
-    "show_fit_logs": <boolean>
-  }
+  "show_fit_logs": <boolean>,
 }
 ```
 
@@ -57,12 +42,13 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `mode` | yes | `"metadata"` for fast header-only estimate, `"fit"` for full llama-fit projection |
-| `model.source` | yes | `"local"` or `"huggingface"` |
-| `model.path` | no | Local or virtual WASM FS path (used when `source = "local"`) |
-| `model.huggingFace` | no | HF repo details (used when `source = "huggingface"`) |
-| `model.huggingFace.resolvedUrl` | no | Optional direct URL override for metadata range requests (for example a client-resolved redirect target) |
+| `model` | yes | Local or virtual WASM FS path |
 | `runtime.n_ctx` | yes | Context window size in tokens |
+| `runtime.min_ctx` | no | Minimum context size for fit execution (maps to `--fit-ctx`) |
+| `runtime.n_batch` | no | Batch size for fit execution |
+| `runtime.n_ubatch` | no | Unbatch size for fit execution |
+| `runtime.n_gpu_layers` | no | Number of layers to offload to GPU; `-1` for all possible |
+| `runtime.split_mode` | no | Sharding strategy for multi-GPU fits (`row`, `layer`, or `tensor`) |
 | `runtime.cache_type_k` | yes | KV cache key dtype (e.g. `"f16"`, `"q8_0"`) |
 | `runtime.cache_type_v` | yes | KV cache value dtype |
 | `device.host_ram_bytes` | yes | Available host RAM in bytes |
@@ -70,7 +56,7 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
 | `device.target_free_mib` | no | Per-device desired free memory in MiB after fit adjustments |
 | `device.gpus` | no | GPU device list; omit for CPU-only mode |
 | `device.gpus[].backend` | no | Simulated backend profile used for op support matching (`cuda` default) |
-| `fit` | no | Options for the fit execution pass |
+| `show_fit_logs` | no | Whether to show fit execution logs |
 
 ---
 
