@@ -167,21 +167,18 @@ bool collect_memory_breakdown(
     }
 
     for (size_t i = 0; i < device_rows.size(); ++i) {
-        if (i < simulated_devices.size()) {
-            const uint64_t sim_free = simulated_devices[i].free_bytes;
-            const uint64_t sim_total = std::max(simulated_devices[i].total_bytes, sim_free);
-            device_rows[i].free = sim_free;
-            device_rows[i].total = sim_total;
-            continue;
-        }
-
         size_t free_b = 0;
         size_t total_b = 0;
         ggml_backend_dev_memory(devices[i], &free_b, &total_b);
 
         if (free_b == 0 && total_b == 0) {
-            free_b = static_cast<size_t>(host_row.free);
-            total_b = static_cast<size_t>(host_row.total);
+            if (i < simulated_devices.size()) {
+                free_b = static_cast<size_t>(simulated_devices[i].free_bytes);
+                total_b = static_cast<size_t>(std::max(simulated_devices[i].total_bytes, simulated_devices[i].free_bytes));
+            } else {
+                free_b = static_cast<size_t>(host_row.free);
+                total_b = static_cast<size_t>(host_row.total);
+            }
         }
 
         device_rows[i].free = static_cast<uint64_t>(free_b);

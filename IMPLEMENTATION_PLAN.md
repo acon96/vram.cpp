@@ -217,6 +217,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 
 ## 9. Immediate Next Steps
 
+### "Mainline" implementation tasks:
 1. [x] Create predictor API schema file (request/response JSON).
 2. [x] Add Emscripten target skeleton with one exported function returning version/system info.
 3. [x] Implement GGUF metadata parse prototype and iterative HF prefix range planning helper.
@@ -237,7 +238,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 10. [x] Return detailed model/context/compute memory breakdowns from the in-process API path instead of fitted parameters only.
 11. [x] Add a JS-side wasm integration flow that mounts model bytes and calls `fit.execute_in_process`.
 12. [x] Put together a simple html UI page that can exercise the wasm predictor API with local file and HF URL inputs and display the output breakdowns and fit recommendations.
-13. [ ] Add more fixtures and edge cases to the test suite, including split GGUF models, metadata-only files, and heterogeneous systems.
+13. [x] Add more fixtures and edge cases to the test suite, including split GGUF models, metadata-only files, and heterogeneous systems.
   - [x] Added predictor API edge-case coverage for metadata-only GGUF fixtures using multiple vocab-only model files.
   - [x] Added split-shard Hugging Face planning coverage for `-00001-of-00002.gguf` request flows.
   - [x] Added heterogeneous multi-GPU fit planning coverage with mixed free/total device memory overrides.
@@ -268,8 +269,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Added a `HuggingFaceSearch` UI component that searches HF repos and loads candidate `.gguf` files from the selected repo/revision tree.
   - [x] Wired a metadata validation preflight that runs browser-side range fetch + parser calls through the wasm worker and surfaces errors/metadata in the UI.
   - [x] Updated the model input layout to an explicit top-level "Upload" OR "Search on HF" switch next to existing upload flow.
-17. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
-18. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
+17. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
   - [x] Added a new simulated backend module (`cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`) that exposes profile-aware fake ggml GPU devices (CUDA/Metal/Vulkan/Generic) with configurable free/total memory and null-terminated `ggml_backend_dev_t *` wiring for `llama_model_params.devices`.
   - [x] Routed in-process fit execution through `sim_backend` + stock `common_fit_params(...)` so predictor API fit execution no longer calls patched `common_fit_params_with_memory_override(...)`.
   - [x] Threaded optional per-device backend profile selection through API request parsing (`device.gpus[].backend`) and validated it in predictor API tests.
@@ -277,18 +277,31 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Refined simulated device memory accounting so `ggml_backend_dev_memory` reports post-allocation free bytes (reducing negative/unbounded unaccounted memory artifacts in debug tables).
   - [x] Corrected `target_free_mib` to fit-margin conversion so large simulated free-memory values do not inflate margin requirements and force unexpected host placement.
   - [x] Removed the vendor `common_fit_params_with_memory_override(...)` surface and rewired `vram_fit_harness` onto the shared `execute_fit_request(...)` path.
-  - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel.
+  - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel (cuda, metal, vulkan, etc.)
+  - [ ] Add hard coded profiles for common GPUs with total memory and backend profile presets
+18. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
 
-Fixes needed:
+### Fixes needed:
 - [x] de-duplicate the "Target Free MiB", "Fit target (MiB)" and the "Free VRAM" parameters in the gpu device section. 
   - Removed global fitTargetMiB/targetFreeMiB; replaced with per-GPU `bufferMiB` (keep-free margin) fed to both fit_target_mib and target_free_mib in the fit engine.
 - [x] KV cache quantization types are only FP16, Q8_0 and Q4_0. remove all other options
 - [x] split gguf files: use original HF filename when mounting prefix bytes in WASM FS so llama.cpp sees the correct shard naming convention
+- [ ] using multiple GPUs seems to cause the fit execution to fail in strange ways; best guess is that the simulated backend devices are violating the contract in some subtle way because I keep seeing it assign all layers to 1 GPU instead of spreading out the layers as evenly as possible amongst all GPUs.
 
-Tweaks:
+### Tweaks:
 - [x] Auto assign the device index based on the order they are in the UI. the user doesn't need to select them directly
 - [x] Metadata preview should be collapsed and not cause the UI to jump when it loads/appears. basically put the drawer behind a button that is enabled once the metadata is verified
 - [x] Move the 'Runtime' parameters section to be on the same row as the 'Model' section and expand the remaining parameters to fill that row and make it into the 'Hardware Config' section.
+- [ ] Figure out how to visually indicate the progress of the fit execution (i.e. number of attempts/iterations?)
+
+### Cleanup:
+- [ ] Remove the `web/` folder and move the wasm helper and worker files into `ui/lib/` since they are only used by the UI and not shared with any other potential consumers of the wasm module. the smoke test can be deleted
+- [ ] replace all the custom gguf parsing code with @huggingface/gguf because it can already handle remote ggufs stored on HuggingFace with built in support for range requests, and it will be more robust and better maintained than a custom implementation. just need to make sure it supports retrieving the raw bytes of the metadata without trying to fetch the whole file, which it should be able to do since it already supports range requests.
+- [ ] Work through the entire codebase and find any unnecessary complications in the arguments, responses, and API surfaces. 
+  - The goal would be to remove extra logic and handling for scenarios that don't exist in the codebase.
+  - Basically a reverse YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.
+  - If there are any response fields that are calculated but not actually returned or used by the UI, those should be removed as well.
+  - The idea is to have a clean and minimal codebase that only includes what is actually needed for the app to function, without extra noise or complexity from unused features or hypothetical scenarios.
 
 ## 10. Change Log
 

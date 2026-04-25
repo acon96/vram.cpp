@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 #if defined(VRAM_HAS_LLAMA_FIT_EXECUTION)
@@ -82,6 +83,13 @@ struct sim_device_context {
     sim_device_spec spec;
     ggml_backend_buffer_type buft = {};
     uint64_t allocated_bytes = 0;
+};
+
+struct sim_device_caps {
+    bool async = true;
+    bool host_buffer = false;
+    bool buffer_from_host_ptr = false;
+    bool events = true;
 };
 
 struct sim_buffer_context {
@@ -277,6 +285,20 @@ const struct ggml_backend_buffer_i sim_buffer_i = {
 ggml_backend_buffer_t sim_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     auto * device_ctx = static_cast<sim_device_context *>(buft->context);
 
+    if (device_ctx == nullptr) {
+        return nullptr;
+    }
+
+    if (size > static_cast<size_t>(std::numeric_limits<uint64_t>::max())) {
+        return nullptr;
+    }
+
+    const uint64_t request_size = static_cast<uint64_t>(size);
+    if (request_size > device_ctx->spec.free_bytes ||
+            device_ctx->allocated_bytes > device_ctx->spec.free_bytes - request_size) {
+        return nullptr;
+    }
+
     void * data = sim_aligned_alloc(size, k_tensor_alignment);
     if (data == nullptr) {
         return nullptr;
@@ -347,9 +369,25 @@ enum ggml_backend_dev_type sim_device_get_type(ggml_backend_dev_t dev) {
 
 void sim_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
     const auto * ctx = static_cast<const sim_device_context *>(dev->context);
-    const bool metal_profile = ctx->spec.profile == sim_backend_profile::metal;
     const uint64_t allocated = std::min<uint64_t>(ctx->allocated_bytes, ctx->spec.free_bytes);
     const uint64_t adjusted_free = ctx->spec.free_bytes - allocated;
+
+    sim_device_caps caps = {};
+    switch (ctx->spec.profile) {
+        case sim_backend_profile::cuda:
+            caps = {/* async = */ true, /* host_buffer = */ true, /* buffer_from_host_ptr = */ false, /* events = */ true};
+            break;
+        case sim_backend_profile::vulkan:
+            caps = {/* async = */ true, /* host_buffer = */ true, /* buffer_from_host_ptr = */ false, /* events = */ true};
+            break;
+        case sim_backend_profile::metal:
+            caps = {/* async = */ true, /* host_buffer = */ false, /* buffer_from_host_ptr = */ true, /* events = */ true};
+            break;
+        case sim_backend_profile::generic:
+        default:
+            caps = {/* async = */ true, /* host_buffer = */ false, /* buffer_from_host_ptr = */ false, /* events = */ true};
+            break;
+    }
 
     props->name = ctx->spec.name.c_str();
     props->description = ctx->spec.description.c_str();
@@ -358,11 +396,28 @@ void sim_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props 
     props->type = GGML_BACKEND_DEVICE_TYPE_GPU;
     props->device_id = nullptr;
     props->caps = {
-        /* .async                 = */ !metal_profile,
-        /* .host_buffer           = */ false,
-        /* .buffer_from_host_ptr  = */ false,
-        /* .events                = */ !metal_profile,
+        /* .async                 = */ caps.async,
+        /* .host_buffer           = */ caps.host_buffer,
+        /* .buffer_from_host_ptr  = */ caps.buffer_from_host_ptr,
+        /* .events                = */ caps.events,
     };
+}
+
+ggml_backend_buffer_type_t sim_device_get_host_buffer_type(ggml_backend_dev_t dev) {
+    const auto * ctx = static_cast<const sim_device_context *>(dev->context);
+    if (ctx == nullptr) {
+        return nullptr;
+    }
+
+    switch (ctx->spec.profile) {
+        case sim_backend_profile::cuda:
+        case sim_backend_profile::vulkan:
+            return ggml_backend_cpu_buffer_type();
+        case sim_backend_profile::metal:
+        case sim_backend_profile::generic:
+        default:
+            return nullptr;
+    }
 }
 
 ggml_backend_t sim_device_init_backend(ggml_backend_dev_t dev, const char * params) {
@@ -442,7 +497,7 @@ const struct ggml_backend_device_i sim_device_i = {
     /* .get_props            = */ sim_device_get_props,
     /* .init_backend         = */ sim_device_init_backend,
     /* .get_buffer_type      = */ sim_device_get_buffer_type,
-    /* .get_host_buffer_type = */ nullptr,
+    /* .get_host_buffer_type = */ sim_device_get_host_buffer_type,
     /* .buffer_from_host_ptr = */ nullptr,
     /* .supports_op          = */ sim_device_supports_op,
     /* .supports_buft        = */ sim_device_supports_buft,
