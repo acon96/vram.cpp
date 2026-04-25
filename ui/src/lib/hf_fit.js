@@ -19,7 +19,7 @@ import {
 // Minimum bytes to fetch for a stub shard header.
 // Each shard GGUF header (tensor descriptors for its subset of tensors) is
 // typically well under 50 KiB; 128 KiB is a generous safety margin.
-const SHARD_HEADER_BYTES = 128 * 1024;
+const SHARD_HEADER_BYTES = 1024 * 1024;
 
 /**
  * Assemble the cached prefetch result object from a successful metadata parse
@@ -70,35 +70,57 @@ export function buildPreparedHfFitResult(
  * @returns {Promise<object>} preparedFit with shardHeaders populated
  */
 async function fetchShardHeadersIfNeeded(preparedFit, selection, logger) {
-    const { splitCount, splitNo, resolvedUrl, originalFileName } = preparedFit;
+    const { splitCount, splitNo } = preparedFit;
 
-    // Only shard 0 (the first file) is the entry point; split.count <= 1 means
-    // non-sharded or the key was absent.
     if (splitCount <= 1 || splitNo !== 0) return preparedFit;
 
-    // Detect that the URL's filename contains the shard pattern.
-    const pattern = detectShardPattern(originalFileName);
+    // Detect the shard pattern from the original selection filename, NOT from
+    // the resolvedUrl. Pre-signed / XetHub URLs encode the filename inside query
+    // params so buildShardUrl can't rewrite them; canonical HF URLs are reliable.
+    const selectionFile = String(selection?.file || '');
+    const baseFileName  = selectionFile.split('/').filter(Boolean).pop() || '';
+    const pattern       = detectShardPattern(baseFileName);
     if (!pattern) {
-        logger?.error('hf.shardHeaders.noPattern', { originalFileName, splitCount });
+        logger?.error('hf.shardHeaders.noPattern', { baseFileName, splitCount });
         return preparedFit;
     }
+
+    // Directory prefix inside the repo (e.g. "models/" or "").
+    const dirParts = selectionFile.split('/').filter(Boolean).slice(0, -1);
+
+    // Fetch the same byte count as the primary shard needed.  Every shard
+    // duplicates the full KV section, so the primary's byte count is a safe
+    // lower bound for each stub.
+    const stubFetchBytes = preparedFit.prefixBytes.byteLength;
+    const token = (selection?.token || '').trim();
 
     logger?.log('hf.shardHeaders.start', {
         totalShards: splitCount,
         pattern,
-        resolvedUrl,
+        baseFileName,
+        stubFetchBytes,
     });
 
-    const includeAuth = resolvedUrl.startsWith('https://huggingface.co/');
-    const token = (selection?.token || '').trim();
-
-    // Build fetch promises for shards 2..N (1-based shardNo).
     const shardFetches = [];
     for (let n = 2; n <= splitCount; n++) {
-        const shardUrl = buildShardUrl(resolvedUrl, n, splitCount);
+        const shardName = baseFileName.replace(
+            /(-)(\d{5})(-of-\d{5}\.gguf)$/i,
+            `$1${String(n).padStart(5, '0')}$3`,
+        );
+        const shardFilePath = dirParts.length > 0 ? `${dirParts.join('/')}/${shardName}` : shardName;
+        const shardUrl = buildCanonicalHfFileUrl({ ...selection, file: shardFilePath });
+        if (!shardUrl) {
+            shardFetches.push(Promise.resolve({ shardNo: n, bytes: null, ok: false, error: 'could_not_build_url' }));
+            continue;
+        }
         shardFetches.push(
-            fetchHfPrefixBytes(shardUrl, 0, SHARD_HEADER_BYTES - 1, token, includeAuth)
-                .then((result) => ({ shardNo: n, bytes: result.bytes, ok: true }))
+            fetchHfPrefixBytes(shardUrl, 0, stubFetchBytes - 1, token, true)
+                .then((result) => ({
+                    shardNo: n,
+                    bytes: result.bytes,
+                    ok: true,
+                    logicalSizeBytes: parseTotalBytesFromFetchHeaders(result),
+                }))
                 .catch((err) => ({ shardNo: n, bytes: null, ok: false, error: err?.message ?? String(err) })),
         );
     }
@@ -107,8 +129,12 @@ async function fetchShardHeadersIfNeeded(preparedFit, selection, logger) {
     const shardHeaders = [];
     for (const r of results) {
         if (r.ok && r.bytes != null) {
-            shardHeaders.push({ shardNo: r.shardNo, bytes: r.bytes });
-            logger?.log('hf.shardHeaders.fetched', { shardNo: r.shardNo, bytes: r.bytes.byteLength });
+            shardHeaders.push({ shardNo: r.shardNo, bytes: r.bytes, logicalSizeBytes: r.logicalSizeBytes || 0 });
+            logger?.log('hf.shardHeaders.fetched', {
+                shardNo: r.shardNo,
+                bytes: r.bytes.byteLength,
+                logicalSizeBytes: r.logicalSizeBytes,
+            });
         } else {
             logger?.error('hf.shardHeaders.fetchFailed', { shardNo: r.shardNo, error: r.error });
         }
@@ -127,10 +153,12 @@ export async function runFitFromPreparedPrefix(client, preparedFit, predictInput
     const fitFile  = new File([preparedFit.prefixBytes], fileName, { type: 'application/octet-stream' });
 
     // Build shardFiles array for the worker.  Each entry has the 1-based
-    // shardNo and the raw Uint8Array (worker converts to ArrayBuffer).
+    // shardNo, the raw Uint8Array, and the logical file size so the worker
+    // can apply the sparse-read trick to each stub.
     const shardFiles = (preparedFit.shardHeaders || []).map((sh) => ({
         shardNo: sh.shardNo,
         bytes: sh.bytes,
+        logicalSizeBytes: sh.logicalSizeBytes || 0,
     }));
 
     const fitInput = {

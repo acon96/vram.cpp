@@ -282,9 +282,17 @@ async function handlePredict(message) {
             `$1${String(shard.shardNo).padStart(5, '0')}$2`,
         );
         const shardPath = `${mountRoot}/${message.jobId}_${shardName}`;
-        module.FS.writeFile(shardPath, new Uint8Array(shard.bytes));
+        const shardBytes = new Uint8Array(shard.bytes);
+        module.FS.writeFile(shardPath, shardBytes);
+        // Apply the sparse-read trick so that reads past our stub prefix return
+        // zeros instead of EOF errors.  With no_alloc=true only the GGUF header
+        // + tensor descriptors are read, never the tensor data section.
+        const shardLogicalSize = parseLogicalSizeBytes(shard.logicalSizeBytes);
+        if (shardLogicalSize > shardBytes.byteLength) {
+            installSparseLogicalSize(module, shardPath, shardLogicalSize, shardBytes.byteLength);
+        }
         shardPaths.push(shardPath);
-        debugLog('handlePredict.mountedShard', { shardPath, bytes: shard.bytes.byteLength });
+        debugLog('handlePredict.mountedShard', { shardPath, bytes: shardBytes.byteLength, shardLogicalSize });
     }
 
     try {
