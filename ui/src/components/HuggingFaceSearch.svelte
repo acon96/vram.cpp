@@ -47,6 +47,7 @@
     let resolvingUrl = $state(false);
     let resolvedUrl = $state('');
     let resolvedUrlError = $state('');
+    let metadataPreviewOpen = $state(false);
 
     const showRepoDropdown = $derived(
         repoDropdownOpen && (
@@ -190,6 +191,7 @@
     function resetValidationState(error = '') {
         validationResponse = null;
         validationError = error;
+        metadataPreviewOpen = false;
         emitSelection(false, null, error);
     }
 
@@ -506,14 +508,6 @@
             <button
                 type="button"
                 class="secondary"
-                onclick={() => searchModels()}
-                disabled={searching || repoQuery.trim().length === 0}
-            >
-                {searching ? 'Searching...' : 'Search'}
-            </button>
-            <button
-                type="button"
-                class="secondary"
                 onclick={() => loadRepoFiles(repoQuery)}
                 disabled={loadingFiles || repoQuery.trim().length === 0}
             >
@@ -558,7 +552,7 @@
         {/if}
     </div>
 
-    <div class="options-grid">
+    <div class="options-column">
         <label>
             Revision
             <input type="text" value={revision} oninput={handleRevisionInput} placeholder="main" />
@@ -598,7 +592,13 @@
             <span class="status">Resolving final file URL...</span>
         {/if}
         {#if validationResponse?.ok === true && validationResponse?.metadata}
-            <span class="status ok">Metadata ready</span>
+            <button
+                type="button"
+                class="toggle-metadata-btn"
+                onclick={() => { metadataPreviewOpen = !metadataPreviewOpen; }}
+            >
+                {metadataPreviewOpen ? '▾ Hide tensor info' : '▸ Show tensor info'}
+            </button>
         {/if}
     </div>
 
@@ -610,7 +610,7 @@
         <p class="status error">{validationError}</p>
     {/if}
 
-    {#if validationResponse?.ok === true && validationResponse?.metadata}
+    {#if metadataPreviewOpen && validationResponse?.ok === true && validationResponse?.metadata}
         <section class="metadata-preview">
             <h3>Metadata Preview</h3>
             <div class="metadata-grid">
@@ -742,9 +742,9 @@
         color: var(--text-muted);
     }
 
-    .options-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    .options-column {
+        display: flex;
+        flex-direction: column;
         gap: 10px;
     }
 
@@ -768,9 +768,19 @@
         color: var(--error);
     }
 
-    .status.ok {
+    .toggle-metadata-btn {
+        background: none;
+        border: 1px solid var(--border);
         color: var(--accent);
+        font-size: 0.82rem;
         font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .toggle-metadata-btn:hover {
+        background: var(--accent-subtle);
     }
 
     .metadata-preview {

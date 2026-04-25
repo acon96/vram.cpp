@@ -1,9 +1,10 @@
 <script>
     import FileUpload from './components/FileUpload.svelte';
+    import HardwarePanel from './components/HardwarePanel.svelte';
     import HuggingFaceSearch from './components/HuggingFaceSearch.svelte';
     import JsonHarness from './components/JsonHarness.svelte';
-    import ParamPanel from './components/ParamPanel.svelte';
     import ResultsTable from './components/ResultsTable.svelte';
+    import RuntimePanel from './components/RuntimePanel.svelte';
     import { initPredictorWorker } from './lib/predictor_worker_client.js';
     import { giBToBytes } from './lib/format.js';
 
@@ -73,17 +74,17 @@
         const freeGiB = Number.isFinite(Number(input?.freeGiB))
             ? Math.max(0, Math.min(totalGiB, Number(input.freeGiB)))
             : totalGiB;
-        const parsedIndex = Number.isFinite(Number(input?.index))
-            ? Math.max(0, Math.trunc(Number(input.index)))
-            : fallbackIndex;
+        const bufferMiB = Number.isFinite(Number(input?.bufferMiB))
+            ? Math.max(0, Math.trunc(Number(input.bufferMiB)))
+            : 512;
 
         return {
             name: typeof input?.name === 'string' && input.name.trim().length > 0
                 ? input.name
                 : `GPU ${fallbackIndex}`,
-            index: parsedIndex,
             totalGiB,
             freeGiB,
+            bufferMiB,
         };
     }
 
@@ -111,12 +112,6 @@
                 hostRamGiB: Number.isFinite(Number(parsed.hostRamGiB))
                     ? Math.max(1, Number(parsed.hostRamGiB))
                     : undefined,
-                fitTargetMiB: Number.isFinite(Number(parsed.fitTargetMiB))
-                    ? Math.max(0, Math.trunc(Number(parsed.fitTargetMiB)))
-                    : undefined,
-                targetFreeMiB: Number.isFinite(Number(parsed.targetFreeMiB))
-                    ? Math.max(0, Math.trunc(Number(parsed.targetFreeMiB)))
-                    : undefined,
                 gpus,
             };
         } catch (error) {
@@ -134,8 +129,6 @@
         nGpuLayers: -1,
         hostRamGiB: 32,
         gpus: [],
-        fitTargetMiB: 512,
-        targetFreeMiB: 2048,
     };
     const storedHardwareConfig = readStoredHardwareConfig();
 
@@ -159,8 +152,6 @@
     let params = $state({
         ...defaultParams,
         hostRamGiB: storedHardwareConfig.hostRamGiB ?? defaultParams.hostRamGiB,
-        fitTargetMiB: storedHardwareConfig.fitTargetMiB ?? defaultParams.fitTargetMiB,
-        targetFreeMiB: storedHardwareConfig.targetFreeMiB ?? defaultParams.targetFreeMiB,
         gpus: Array.isArray(storedHardwareConfig.gpus)
             ? storedHardwareConfig.gpus
             : defaultParams.gpus,
@@ -248,8 +239,6 @@
 
         const hardwareConfig = {
             hostRamGiB: params.hostRamGiB,
-            fitTargetMiB: params.fitTargetMiB,
-            targetFreeMiB: params.targetFreeMiB,
             gpus: Array.isArray(params.gpus)
                 ? params.gpus.slice(0, 4).map((gpu, index) => normalizeHardwareGpu(gpu, index))
                 : [],
@@ -343,29 +332,23 @@
 
     function buildPredictFitInput() {
         const gpus = params.gpus.map((g, i) => {
-            const parsedIndex = Number.isFinite(Number(g.index))
-                ? Math.max(0, Math.trunc(Number(g.index)))
-                : i;
             const parsedName = typeof g.name === 'string' ? g.name.trim() : '';
-            const fallbackId = `gpu${parsedIndex}`;
-            const id = parsedName.length > 0 ? parsedName : fallbackId;
+            const id = parsedName.length > 0 ? parsedName : `gpu${i}`;
 
             return {
                 id,
                 name: parsedName,
-                index: parsedIndex,
+                index: i,
                 backend: 'cuda',
                 free_bytes: giBToBytes(g.freeGiB),
                 total_bytes: giBToBytes(g.totalGiB),
             };
         });
 
-        const fitTargets = params.gpus.length > 0
-            ? params.gpus.map(() => params.fitTargetMiB)
-            : [params.fitTargetMiB];
-        const freeTargets = params.gpus.length > 0
-            ? params.gpus.map(() => params.targetFreeMiB)
-            : [params.targetFreeMiB];
+        // Per-GPU keep-free buffer feeds into both fit_target_mib and target_free_mib.
+        const bufferTargets = params.gpus.map((g) => g.bufferMiB ?? 512);
+        const fitTargets = bufferTargets.length > 0 ? bufferTargets : [512];
+        const freeTargets = bufferTargets.length > 0 ? bufferTargets : [];
 
         return {
             hostRamBytes: giBToBytes(params.hostRamGiB),
@@ -741,6 +724,14 @@
             : sizeFromSelection;
         const contextLength = extractContextLengthFromPrefix(prefixBytes);
 
+        // Preserve the original HF filename so llama.cpp sees a valid name when
+        // the file is mounted in the WASM virtual FS. This is especially important
+        // for split-shard models whose filenames must match the shard naming convention.
+        const originalFileName = String(selection?.file || '')
+            .split('/')
+            .filter(Boolean)
+            .pop() || 'model.gguf';
+
         return {
             ...metadataResponse,
             source: 'huggingface',
@@ -750,12 +741,15 @@
             prefixBytes,
             logicalFileSizeBytes,
             contextLength,
+            originalFileName,
             cacheKey: buildHfSelectionCacheKey({ ...selection, resolvedUrl: requestUrl }),
         };
     }
 
     async function runFitFromPreparedPrefix(client, preparedFit, predictInput) {
-        const fitFile = new File([preparedFit.prefixBytes], 'hf_cached_prefix.gguf', {
+        // Use the original HF filename so split-shard naming is preserved.
+        const fileName = preparedFit.originalFileName || 'hf_cached_prefix.gguf';
+        const fitFile = new File([preparedFit.prefixBytes], fileName, {
             type: 'application/octet-stream',
         });
 
@@ -1287,7 +1281,7 @@
                 });
             }
 
-            const { prefixBytes, logicalFileSizeBytes, contextLength, cacheKey, ...responseForUi } = response;
+            const { prefixBytes, logicalFileSizeBytes, contextLength, originalFileName, cacheKey, ...responseForUi } = response;
             return responseForUi;
         }
 
@@ -1307,19 +1301,8 @@
             ? predictInput.gpus.length
             : 0;
 
-        let hint = '';
-        if (response?.fit?.status === 2 && sentGpuOverrides > 0 && deviceCountInResponse === 0) {
-            hint = ' Hint: this may be a GPU override/device-count mismatch on the wasm backend. Try removing GPU rows and retrying.';
-        }
-        if (typeof response?.error === 'string' && response.error.includes('thread constructor failed: Not supported')) {
-            hint += ' Hint: backend fit logs are trying to use a thread path unsupported by this wasm build. Keep VITE_DEBUG_WASM_FIT_LOGS unset.';
-        }
-        if (typeof response?.error === 'string' && response.error.includes('failed_to_create_fitted_context')) {
-            hint += ' Hint: fit projection succeeded, but creating the actual fitted context failed in wasm (likely runtime heap allocation limits and/or batch buffer size). Try a lower n_ctx.';
-        }
-
         return {
-            message: `WASM fit failed (${fitStatusText}).${fitWarnings}${backendError}${hint}`,
+            message: `WASM fit failed (${fitStatusText}).${fitWarnings}${backendError}`,
             diagnostics: {
                 fitStatus: response?.fit?.status,
                 fitStatusText,
@@ -1339,7 +1322,7 @@
                 return;
             }
         } else if (!hfSelection.validated) {
-            errorMsg = 'Validate a Hugging Face GGUF file first.';
+            errorMsg = 'Please select a valid Hugging Face model first.';
             status = 'error';
             return;
         }
@@ -1475,12 +1458,21 @@
         {#if isJsonHarnessView}
             <JsonHarness wasmJsUrl={wasmJsUrl} debugEnabled={wasmDebugEnabled} />
         {:else}
-        <!-- Top row: Model input + Results side-by-side -->
-        <div class="top-row">
+        <!-- Row 1: Model input + Runtime params side-by-side -->
+        <div class="model-runtime-row">
             <div class="model-col">
                 <section class="panel-section">
                     <h2 class="panel-title">Model</h2>
                     <div class="source-switch" role="tablist" aria-label="Model source">
+                        <button
+                            class="source-btn"
+                            class:active={modelSource === 'huggingface'}
+                            type="button"
+                            onclick={() => handleModelSourceChange('huggingface')}
+                        >
+                            Search on HuggingFace
+                        </button>
+                        <span class="source-or">OR</span>
                         <button
                             class="source-btn"
                             class:active={modelSource === 'local'}
@@ -1488,15 +1480,6 @@
                             onclick={() => handleModelSourceChange('local')}
                         >
                             Upload
-                        </button>
-                        <span class="source-or">OR</span>
-                        <button
-                            class="source-btn"
-                            class:active={modelSource === 'huggingface'}
-                            type="button"
-                            onclick={() => handleModelSourceChange('huggingface')}
-                        >
-                            Search on HF
                         </button>
                     </div>
 
@@ -1510,12 +1493,17 @@
                     {/if}
                 </section>
             </div>
+
+            <section class="panel-section runtime-col">
+                <h2 class="panel-title">Runtime</h2>
+                <RuntimePanel {params} onchange={handleParamsChange} />
+            </section>
         </div>
 
-        <!-- Middle: Parameters flowing left-to-right -->
-        <section class="panel-section params-section">
-            <h2 class="panel-title">Parameters</h2>
-            <ParamPanel {params} onchange={handleParamsChange} />
+        <!-- Row 2: Hardware config spans full width -->
+        <section class="panel-section hardware-section">
+            <h2 class="panel-title">Hardware Config</h2>
+            <HardwarePanel {params} onchange={handleParamsChange} />
         </section>
 
         <section class="results-section">
@@ -1535,7 +1523,9 @@
                 </button>
 
                 {#if modelSource === 'huggingface' && !hfSelection.validated}
-                    <p class="hint-msg">Validate a Hugging Face GGUF file to enable prediction.</p>
+                    <p class="hint-msg">Select a valid Hugging Face model to enable fitting.</p>
+                {:else if modelSource === 'local' && selectedFile == null}
+                    <p class="hint-msg">Please upload a GGUF file to enable fitting.</p>
                 {/if}
 
                 {#if status === 'error'}
@@ -1628,24 +1618,24 @@
         box-sizing: border-box;
     }
 
-    /* Top row: Model col (fixed) + Results panel (grows) */
-    .top-row {
+    /* Row 1: Model + Runtime side by side */
+    .model-runtime-row {
         display: grid;
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(340px, 1fr) minmax(340px, 1fr);
         gap: 20px;
         align-items: start;
     }
 
-    @media (max-width: 760px) {
-        .top-row {
+    @media (max-width: 800px) {
+        .model-runtime-row {
             grid-template-columns: 1fr;
         }
     }
 
-    .model-col {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
+    /* Row 2: Hardware config full width */
+    .hardware-section {
+        width: 100%;
+        box-sizing: border-box;
     }
 
     .source-switch {
@@ -1679,13 +1669,7 @@
         font-family: var(--mono);
     }
 
-    /* Parameters section spans the full width below */
-    .params-section {
-        width: 100%;
-        box-sizing: border-box;
-    }
-
-    /* ── Config panel (removed — layout replaced by top-row + params-section) ── */
+    /* ── Config panel (removed — layout replaced by model-runtime-row + hardware-section) ── */
 
     .panel-section {
         background: var(--surface);

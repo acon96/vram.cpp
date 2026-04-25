@@ -279,6 +279,18 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Removed the vendor `common_fit_params_with_memory_override(...)` surface and rewired `vram_fit_harness` onto the shared `execute_fit_request(...)` path.
   - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel.
 
+Fixes needed:
+- [ ] de-duplicate the "Target Free MiB", "Fit target (MiB)" and the "Free VRAM" parameters in the gpu device section. 
+  - They all technically mean the same thing. They are the "buffer" to keep free on the GPU with the rest being available to be allocated for LLMs.
+  - We should allow the user to set a "buffer" to keep free per device, and feed that into the fit engine as the target free memory to maintain on the device. This will simplify the UI and make it more intuitive, while still giving users control over how much free memory to leave for system processes and other overhead (i.e. mmproj files)
+- [ ] KV cache quantization types are only FP16, Q8_0 and Q4_0. remove all other options
+- [ ] split gguf files are not working right now: `llama_model_load: error loading model: invalid split file name: /models/8_hf_cached_prefix.gguf`
+
+Tweaks:
+- [ ] Auto assign the device index based on the order they are in the UI. the user doesn't need to select them directly
+- [ ] Metadata preview should be collapsed and not cause the UI to jump when it loads/appears. basically put the drawer behind a button that is enabled once the metadata is verified
+- [ ] Move the 'Runtime' parameters section to be on the same row as the 'Model' section and expand the remaining parameters to fill that row and make it into the 'Hardware Config' section.
+
 ## 10. Change Log
 
 - 2026-04-23: Bootstrapped repository skeleton with CMake, include/src layout, API schemas, and WASM-exported C ABI stubs.
