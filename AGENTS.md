@@ -70,31 +70,16 @@ Use links instead of duplicating details:
 ## Build and Test Commands
 Use these first unless a task explicitly needs alternatives.
 
-Native (no vendor llama):
-```bash
-cmake -S . -B build -DVRAM_ENABLE_VENDOR_LLAMA=OFF
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-Vendor-enabled native fit execution/parity:
+Native validation build:
 ```bash
 cmake -S . -B build-vendor -DVRAM_ENABLE_VENDOR_LLAMA=ON
 cmake --build build-vendor
 ctest --test-dir build-vendor --output-on-failure
 ```
 
-WASM build:
+Deployable WASM build:
 ```bash
-source ~/emsdk/emsdk_env.sh
-emcmake cmake -S . -B build-wasm -DVRAM_ENABLE_VENDOR_LLAMA=OFF
-cmake --build build-wasm --target vram_predictor_wasm -j4
-```
-
-Vendor-enabled WASM build:
-```bash
-source ~/emsdk/emsdk_env.sh
-emcmake cmake -S . -B build-wasm-vendor -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_TESTS=OFF
+source ~/emsdk/emsdk_env.sh && emcmake cmake -S . -B build-wasm-vendor -DVRAM_ENABLE_VENDOR_LLAMA=ON -DVRAM_BUILD_TESTS=OFF
 cmake --build build-wasm-vendor --target vram_predictor_wasm -j4
 ```
 
@@ -114,7 +99,7 @@ npm run build
   - `VRAM_LLAMA_FIT_BINARY`
   - `VRAM_FIT_HARNESS_BINARY`
 - `.fixtures/` is gitignored; do not assume fixtures exist in fresh clones.
-    - If you need to use a real GGUF file, search in this folder
+    - If you need to use a real GGUF file, search in this folder; the developer has likely downloaded fixtures here for testing. Just make sure you search the folder directly before trying to download large files again.
 
 ## API Contract Guardrails
 - Keep responses compact and stable (item 14 simplification).

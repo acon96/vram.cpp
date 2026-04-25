@@ -293,6 +293,10 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - [x] Metadata preview should be collapsed and not cause the UI to jump when it loads/appears. basically put the drawer behind a button that is enabled once the metadata is verified
 - [x] Move the 'Runtime' parameters section to be on the same row as the 'Model' section and expand the remaining parameters to fill that row and make it into the 'Hardware Config' section.
 - [ ] Figure out how to visually indicate the progress of the fit execution (i.e. number of attempts/iterations?)
+  - probably need to detect the number of iterations the fit algorithm has gone through and show "Fitting... (attempt ##)" below the spinner
+  - also probably should allow cancelling the fit attempt if it's taking too long or the user wants to adjust parameters and try again. this would involve adding a cancellation mechanism to the API and the wasm worker, and then adding a "Cancel" button in the UI that triggers it.
+- [ ] Add support for split modes (layer, row, tensor) and other llama.cpp knobs that affect memory allocation/usage
+- [ ] HuggingFace gguf "validate" button should show all the individual sub-steps in the hint text box so it doesn't look like it "froze"
 
 ### Cleanup:
 - [ ] Remove the `web/` folder and move the wasm helper and worker files into `ui/lib/` since they are only used by the UI and not shared with any other potential consumers of the wasm module. the smoke test can be deleted
@@ -302,6 +306,9 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - Basically a reverse YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.
   - If there are any response fields that are calculated but not actually returned or used by the UI, those should be removed as well.
   - The idea is to have a clean and minimal codebase that only includes what is actually needed for the app to function, without extra noise or complexity from unused features or hypothetical scenarios.
+- [ ] reduce the number of "build targets" for the cpp part of the project. 
+  - there shouldn't be the ability to build **without** llama.cpp vendored in. unit testing against the core logic without llama.cpp doesn't help a ton since the main point of the project is to run the actual llama-fit code in wasm or native.
+  - the c++ code also needs to be cleaned up to remove the preprocessor macros that handled the non-vendor build targets (i.e. `VRAM_ENABLE_VENDOR_LLAMA`)
 
 ## 10. Change Log
 

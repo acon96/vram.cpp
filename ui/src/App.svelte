@@ -170,15 +170,18 @@
             const name = typeof g.name === 'string' ? g.name.trim() : '';
             return {
                 id: name || `gpu${i}`, name, index: i, backend: 'cuda',
-                // free_bytes == total_bytes: bufferMiB is reserved via target_free_mib
+                // free_bytes == total_bytes: reserve policy is controlled by target_free_mib
                 free_bytes:  giBToBytes(g.totalGiB),
                 total_bytes: giBToBytes(g.totalGiB),
             };
         });
         const bufferTargets = params.gpus.map((g) => g.bufferMiB ?? 512);
+        const zeroMargins = bufferTargets.map(() => 0);
         return {
             hostRamBytes: giBToBytes(params.hostRamGiB),
-            fitTargetMiB:  bufferTargets.length > 0 ? bufferTargets : [512],
+            // Keep free should map to one backend knob. Leave fit_target at 0 so it
+            // does not stack on top of target_free_mib.
+            fitTargetMiB:  bufferTargets.length > 0 ? zeroMargins : [512],
             targetFreeMiB: bufferTargets.length > 0 ? bufferTargets : [],
             gpus,
             nCtx: params.nCtx, nBatch: params.nBatch, nUbatch: params.nUbatch,

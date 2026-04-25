@@ -4,8 +4,8 @@
      *
      * GPU shape: { name?: string, totalGiB: number, bufferMiB: number }
      *   - totalGiB:  total VRAM on the device
-     *   - bufferMiB: memory to keep free (fed to fit engine as fit_target_mib
-     *                and target_free_mib; the engine allocates the remainder)
+        *   - bufferMiB: memory to keep free (fed to fit engine as target_free_mib;
+        *                fit_target_mib stays zero so reserve is not double-counted)
      */
 
     /** @type {{ params: { hostRamGiB: number, gpus: Array<{name?: string, totalGiB: number, bufferMiB: number}> }, onchange: Function }} */

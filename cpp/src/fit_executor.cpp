@@ -84,6 +84,7 @@ bool collect_memory_breakdown(
         const llama_model_params & model_params,
         const llama_context_params & context_params,
         const std::vector<sim_device_spec> & simulated_devices,
+        bool emit_debug_logs,
         bool host_override_enabled,
         uint64_t host_override_free_mib,
         uint64_t host_override_total_mib,
@@ -118,6 +119,14 @@ bool collect_memory_breakdown(
     devices.reserve(static_cast<size_t>(std::max(0, nd)));
     for (int i = 0; i < nd; ++i) {
         devices.push_back(llama_model_get_device(model, i));
+        if (emit_debug_logs) {
+            std::fprintf(stderr,
+                "[vram-fit] breakdown model_device[%d]=%p name=%s desc=%s\n",
+                i,
+                (void *) devices.back(),
+                devices.back() ? ggml_backend_dev_name(devices.back()) : "<null>",
+                devices.back() ? ggml_backend_dev_description(devices.back()) : "<null>");
+        }
     }
 
     std::vector<fit_memory_row_bytes> device_rows(devices.size());
@@ -129,6 +138,12 @@ bool collect_memory_breakdown(
         const llama_memory_breakdown_data & mb = buft_mb.second;
 
         if (ggml_backend_buft_is_host(buft)) {
+            if (emit_debug_logs) {
+                std::fprintf(stderr,
+                    "[vram-fit] breakdown buft=%p name=%s host=1 model=%zu context=%zu compute=%zu\n",
+                    (void *) buft, ggml_backend_buft_name(buft),
+                    mb.model, mb.context, mb.compute);
+            }
             host_row.model += static_cast<uint64_t>(mb.model);
             host_row.context += static_cast<uint64_t>(mb.context);
             host_row.compute += static_cast<uint64_t>(mb.compute);
@@ -137,16 +152,36 @@ bool collect_memory_breakdown(
 
         ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
         if (dev == nullptr) {
+            if (emit_debug_logs) {
+                std::fprintf(stderr,
+                    "[vram-fit] breakdown buft=%p name=%s host=0 dev=<null> model=%zu context=%zu compute=%zu\n",
+                    (void *) buft, ggml_backend_buft_name(buft),
+                    mb.model, mb.context, mb.compute);
+            }
             continue;
         }
 
+        bool matched = false;
         for (size_t i = 0; i < devices.size(); ++i) {
             if (devices[i] == dev) {
                 device_rows[i].model += static_cast<uint64_t>(mb.model);
                 device_rows[i].context += static_cast<uint64_t>(mb.context);
                 device_rows[i].compute += static_cast<uint64_t>(mb.compute);
+                if (emit_debug_logs) {
+                    std::fprintf(stderr,
+                        "[vram-fit] breakdown buft=%p name=%s host=0 dev=%p -> model_device[%zu] model=%zu context=%zu compute=%zu\n",
+                        (void *) buft, ggml_backend_buft_name(buft), (void *) dev,
+                        i, mb.model, mb.context, mb.compute);
+                }
+                matched = true;
                 break;
             }
+        }
+        if (emit_debug_logs && !matched) {
+            std::fprintf(stderr,
+                "[vram-fit] breakdown buft=%p name=%s host=0 dev=%p unmatched model=%zu context=%zu compute=%zu\n",
+                (void *) buft, ggml_backend_buft_name(buft), (void *) dev,
+                mb.model, mb.context, mb.compute);
         }
     }
 
@@ -183,6 +218,11 @@ bool collect_memory_breakdown(
 
         device_rows[i].free = static_cast<uint64_t>(free_b);
         device_rows[i].total = static_cast<uint64_t>(total_b);
+        if (emit_debug_logs) {
+            std::fprintf(stderr,
+                "[vram-fit] breakdown device[%zu] free=%zu total=%zu\n",
+                i, free_b, total_b);
+        }
     }
 
     result.devices.clear();
@@ -197,7 +237,20 @@ bool collect_memory_breakdown(
         const uint64_t context_b = row.context;
         const uint64_t compute_b = row.compute;
         const uint64_t self_b = model_b + context_b + compute_b;
-        const uint64_t unaccounted_b = total_b >= self_b + free_b ? total_b - self_b - free_b : 0;
+        const bool overcommitted = self_b > free_b;
+        const uint64_t unaccounted_b = overcommitted ? 0 : total_b - self_b - free_b;
+        if (overcommitted) {
+            result.warnings.push_back("memory_breakdown_overcommitted_device_" + std::to_string(i));
+            if (emit_debug_logs) {
+                std::fprintf(stderr,
+                    "[vram-fit] breakdown overcommit device[%zu]: self=%llu free=%llu over_free=%llu total=%llu\n",
+                    i,
+                    static_cast<unsigned long long>(self_b),
+                    static_cast<unsigned long long>(free_b),
+                    static_cast<unsigned long long>(self_b - free_b),
+                    static_cast<unsigned long long>(total_b));
+            }
+        }
 
         fit_memory_breakdown_entry entry;
         if (i < simulated_devices.size() && !simulated_devices[i].name.empty()) {
@@ -226,7 +279,19 @@ bool collect_memory_breakdown(
     const uint64_t host_context_b = host_row.context;
     const uint64_t host_compute_b = host_row.compute;
     const uint64_t host_self_b = host_model_b + host_context_b + host_compute_b;
-    const uint64_t host_unaccounted_b = host_total_b >= host_self_b + host_free_b ? host_total_b - host_self_b - host_free_b : 0;
+    const bool host_overcommitted = host_self_b > host_free_b;
+    const uint64_t host_unaccounted_b = host_overcommitted ? 0 : host_total_b - host_self_b - host_free_b;
+    if (host_overcommitted) {
+        result.warnings.push_back("memory_breakdown_overcommitted_host");
+        if (emit_debug_logs) {
+            std::fprintf(stderr,
+                "[vram-fit] breakdown overcommit host: self=%llu free=%llu over_free=%llu total=%llu\n",
+                static_cast<unsigned long long>(host_self_b),
+                static_cast<unsigned long long>(host_free_b),
+                static_cast<unsigned long long>(host_self_b - host_free_b),
+                static_cast<unsigned long long>(host_total_b));
+        }
+    }
 
     result.host = {};
     result.host.name = "Host";
@@ -479,6 +544,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
                 mparams,
                 cparams,
                 request.simulated_devices,
+            request.show_fit_logs,
                 result.host_override_enabled,
                 result.host_free_mib,
                 result.host_total_mib,
