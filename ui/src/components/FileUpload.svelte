@@ -83,11 +83,16 @@
     .drop-zone {
         border: 2px dashed var(--border);
         border-radius: 12px;
-        padding: 32px 24px;
+        padding: 20px 16px;
         text-align: center;
         cursor: pointer;
         transition: border-color 0.2s, background-color 0.2s;
         background: var(--surface);
+        height: 100%;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .drop-zone:hover,

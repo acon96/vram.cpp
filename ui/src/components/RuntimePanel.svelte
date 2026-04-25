@@ -193,29 +193,8 @@
         color: var(--text-secondary);
     }
 
-    input[type='number'],
-    select {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 7px 10px;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        background: var(--input-bg);
-        color: var(--text-primary);
-        font-size: 0.9rem;
-        font-family: inherit;
-        transition: border-color 0.15s;
-    }
-
-    input:focus,
-    select:focus {
-        outline: none;
-        border-color: var(--accent);
-    }
-
     input[type='range'] {
         flex: 1;
-        accent-color: var(--accent);
     }
 
     .input-row {

@@ -1,130 +1,108 @@
 <script>
     /**
-     * HardwarePanel — host RAM and GPU device configuration.
+     * HardwarePanel — host RAM slider + horizontal GPU device cards.
      *
-     * GPU objects: { name?: string, totalGiB: number, freeGiB: number, bufferMiB: number }
-     * - totalGiB:  total VRAM on the device
-     * - freeGiB:   available VRAM before the LLM is loaded (after OS/driver overhead)
-     * - bufferMiB: keep-free margin during and after fit (fed to fit engine as
-     *              both fit_target_mib and target_free_mib)
-     *
-     * @typedef {object} Params
-     * @property {number} hostRamGiB
-     * @property {Array<{name?: string, totalGiB: number, freeGiB: number, bufferMiB: number}>} gpus
+     * GPU shape: { name?: string, totalGiB: number, bufferMiB: number }
+     *   - totalGiB:  total VRAM on the device
+     *   - bufferMiB: memory to keep free (fed to fit engine as fit_target_mib
+     *                and target_free_mib; the engine allocates the remainder)
      */
 
-    /** @type {{ params: Params, onchange: (p: Params) => void }} */
+    /** @type {{ params: { hostRamGiB: number, gpus: Array<{name?: string, totalGiB: number, bufferMiB: number}> }, onchange: Function }} */
     let { params, onchange } = $props();
 
-    function update(patch) {
-        onchange({ ...params, ...patch });
+    const RAM_SNAPS = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256];
+    const MAX_GPUS  = 6;
+
+    function ramToSliderIndex(gib) {
+        let best = 0;
+        let bestDist = Math.abs(RAM_SNAPS[0] - gib);
+        for (let i = 1; i < RAM_SNAPS.length; i++) {
+            const d = Math.abs(RAM_SNAPS[i] - gib);
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+        return best;
     }
 
-    function updateGpu(index, patch) {
-        const gpus = params.gpus.map((g, i) => (i === index ? { ...g, ...patch } : g));
+    function update(patch) { onchange({ ...params, ...patch }); }
+
+    function updateGpu(i, patch) {
+        const gpus = params.gpus.map((g, idx) => idx === i ? { ...g, ...patch } : g);
         onchange({ ...params, gpus });
     }
 
     function addGpu() {
-        const nextIndex = params.gpus.length;
-        onchange({
-            ...params,
-            gpus: [...params.gpus, {
-                name: `GPU ${nextIndex}`,
-                totalGiB: 8,
-                freeGiB: 8,
-                bufferMiB: 512,
-            }],
-        });
+        if (params.gpus.length >= MAX_GPUS) return;
+        const n = params.gpus.length;
+        onchange({ ...params, gpus: [...params.gpus, { name: `GPU ${n}`, totalGiB: 8, bufferMiB: 512 }] });
     }
 
-    function removeGpu(index) {
-        onchange({ ...params, gpus: params.gpus.filter((_, i) => i !== index) });
-    }
-
-    function onGpuTotalChange(index, value) {
-        const total = parseFloat(value) || 0;
-        const gpu = params.gpus[index];
-        updateGpu(index, { totalGiB: total, freeGiB: Math.min(gpu.freeGiB, total) });
+    function removeGpu(i) {
+        onchange({ ...params, gpus: params.gpus.filter((_, idx) => idx !== i) });
     }
 </script>
 
 <div class="hardware-panel">
-    <!-- Host Memory -->
-    <section class="host-section">
-        <h3>Host Memory</h3>
-        <div class="field">
-            <label for="host-ram">System RAM (GiB)</label>
-            <input
-                id="host-ram"
-                type="number"
-                min="1"
-                step="1"
-                value={params.hostRamGiB}
-                oninput={(e) => update({ hostRamGiB: parseFloat(e.currentTarget.value) || 0 })}
-            />
-        </div>
-    </section>
 
-    <!-- GPU Devices -->
-    <section class="gpus-section">
-        <div class="section-header">
-            <h3>GPU Devices</h3>
-            {#if params.gpus.length < 4}
-                <button type="button" class="add-btn" onclick={addGpu}>+ Add GPU</button>
+    <div class="ram-row">
+        <span class="hw-label">System RAM</span>
+        <input
+            class="ram-slider"
+            type="range"
+            min="0"
+            max={RAM_SNAPS.length - 1}
+            step="1"
+            value={ramToSliderIndex(params.hostRamGiB)}
+            oninput={(e) => update({ hostRamGiB: RAM_SNAPS[parseInt(e.currentTarget.value, 10)] })}
+        />
+        <span class="ram-value">{params.hostRamGiB} GiB</span>
+    </div>
+
+    <div class="gpu-section">
+        <div class="gpu-section-header">
+            <span class="hw-label">GPU Devices</span>
+            {#if params.gpus.length < MAX_GPUS}
+                <button type="button" class="add-gpu-btn" onclick={addGpu}>+ Add GPU</button>
             {:else}
-                <span class="hint">Maximum 4 GPUs</span>
+                <span class="gpu-limit-hint">Max {MAX_GPUS}</span>
             {/if}
         </div>
-        <div class="gpus-list">
+
+        <div class="gpu-track">
             {#if params.gpus.length === 0}
-                <p class="muted">No GPUs — CPU-only mode. <button type="button" class="link-btn" onclick={addGpu}>Add a GPU</button></p>
+                <div class="gpu-empty">
+                    CPU-only — <button type="button" class="link-btn" onclick={addGpu}>add a GPU</button>
+                </div>
             {/if}
             {#each params.gpus as gpu, i}
                 <div class="gpu-card">
-                    <div class="gpu-header">
-                        <span class="gpu-label">GPU {i}</span>
+                    <div class="gpu-card-header">
+                        <span class="gpu-index">GPU {i}</span>
                         <button type="button" class="remove-btn" onclick={() => removeGpu(i)} aria-label="Remove GPU {i}">✕</button>
                     </div>
-
-                    <div class="field">
-                        <label for="gpu-name-{i}">Display name</label>
-                        <input
-                            id="gpu-name-{i}"
-                            type="text"
-                            value={gpu.name ?? `GPU ${i}`}
-                            oninput={(e) => updateGpu(i, { name: e.currentTarget.value })}
-                        />
-                    </div>
-
-                    <div class="field-row">
-                        <div class="field">
-                            <label for="gpu-total-{i}">Total VRAM (GiB)</label>
+                    <input
+                        class="gpu-name-input"
+                        type="text"
+                        placeholder="Name (optional)"
+                        value={gpu.name ?? `GPU ${i}`}
+                        oninput={(e) => updateGpu(i, { name: e.currentTarget.value })}
+                    />
+                    <div class="gpu-fields">
+                        <div class="gpu-field">
+                            <label for="gpu-vram-{i}">VRAM (GiB)</label>
                             <input
-                                id="gpu-total-{i}"
+                                id="gpu-vram-{i}"
                                 type="number"
                                 min="0.5"
                                 step="0.5"
                                 value={gpu.totalGiB}
-                                oninput={(e) => onGpuTotalChange(i, e.currentTarget.value)}
+                                oninput={(e) => updateGpu(i, { totalGiB: parseFloat(e.currentTarget.value) || 0 })}
                             />
                         </div>
-                        <div class="field">
-                            <label for="gpu-free-{i}">Available VRAM (GiB)</label>
+                        <div class="gpu-field">
+                            <label for="gpu-buf-{i}">Keep free (MiB)</label>
                             <input
-                                id="gpu-free-{i}"
-                                type="number"
-                                min="0"
-                                max={gpu.totalGiB}
-                                step="0.5"
-                                value={gpu.freeGiB}
-                                oninput={(e) => updateGpu(i, { freeGiB: parseFloat(e.currentTarget.value) || 0 })}
-                            />
-                        </div>
-                        <div class="field">
-                            <label for="gpu-buffer-{i}">Keep free (MiB)</label>
-                            <input
-                                id="gpu-buffer-{i}"
+                                id="gpu-buf-{i}"
                                 type="number"
                                 min="0"
                                 step="128"
@@ -136,150 +114,183 @@
                 </div>
             {/each}
         </div>
-    </section>
+    </div>
+
 </div>
 
 <style>
     .hardware-panel {
         display: flex;
-        gap: 24px;
-        align-items: start;
-        flex-wrap: wrap;
-    }
-
-    section {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .host-section {
-        min-width: 160px;
-        flex-shrink: 0;
-    }
-
-    .gpus-section {
-        flex: 1;
-        min-width: 300px;
-    }
-
-    h3 {
-        margin: 0;
-        font-size: 0.8rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--text-muted);
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 6px;
-    }
-
-    .section-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 6px;
-    }
-
-    .section-header h3 {
-        border-bottom: none;
-        padding-bottom: 0;
-    }
-
-    .field {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        flex: 1;
-    }
-
-    .field-row {
-        display: flex;
-        gap: 12px;
-    }
-
-    label {
-        font-size: 0.85rem;
-        color: var(--text-secondary);
-    }
-
-    input[type='number'],
-    input[type='text'] {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 7px 10px;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        background: var(--input-bg);
-        color: var(--text-primary);
-        font-size: 0.9rem;
-        font-family: inherit;
-        transition: border-color 0.15s;
-    }
-
-    input:focus {
-        outline: none;
-        border-color: var(--accent);
-    }
-
-    .gpus-list {
-        display: flex;
-        gap: 12px;
-        flex-direction: column;
-    }
-
-    .gpu-card {
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 12px;
-        background: var(--surface-raised);
-        display: flex;
         flex-direction: column;
         gap: 10px;
     }
 
-    .gpu-header {
+    .ram-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .hw-label {
+        font-size: 0.78rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--text-muted);
+        white-space: nowrap;
+        flex-shrink: 0;
+        min-width: 88px;
+    }
+
+    .ram-slider {
+        flex: 1;
+        accent-color: var(--accent);
+    }
+
+    .ram-value {
+        font-size: 0.85rem;
+        font-family: var(--mono);
+        color: var(--text-primary);
+        min-width: 60px;
+        text-align: right;
+        flex-shrink: 0;
+    }
+
+    .gpu-section {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .gpu-section-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .gpu-limit-hint {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+
+    .add-gpu-btn {
+        background: none;
+        border: 1px solid var(--accent);
+        color: var(--accent);
+        border-radius: 999px;
+        padding: 2px 10px;
+        font-size: 0.78rem;
+        font-family: inherit;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+
+    .add-gpu-btn:hover { background: var(--accent-subtle); }
+
+    .gpu-track {
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+    }
+
+    .gpu-track::-webkit-scrollbar { height: 4px; }
+    .gpu-track::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .gpu-empty {
+        font-size: 0.82rem;
+        color: var(--text-muted);
+        padding: 4px 0;
+        white-space: nowrap;
+    }
+
+    .gpu-card {
+        flex-shrink: 0;
+        width: 156px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px;
+        background: var(--surface-raised);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .gpu-card-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
 
-    .gpu-label {
+    .gpu-index {
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+
+    .gpu-name-input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 4px 7px;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--input-bg);
+        color: var(--text-primary);
+        font-size: 0.82rem;
+        font-family: inherit;
+    }
+
+    .gpu-name-input:focus { outline: none; border-color: var(--accent); }
+
+    .gpu-fields {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .gpu-field {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .gpu-field label {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+    }
+
+    .gpu-field input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 4px 7px;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--input-bg);
+        color: var(--text-primary);
         font-size: 0.85rem;
-        font-weight: 600;
-        color: var(--text-secondary);
+        font-family: inherit;
     }
 
-    .add-btn {
-        background: none;
-        border: 1px solid var(--accent);
-        color: var(--accent);
-        border-radius: 999px;
-        padding: 4px 12px;
-        font-size: 0.8rem;
-        cursor: pointer;
-        transition: background 0.15s;
-    }
-
-    .add-btn:hover {
-        background: var(--accent-subtle);
-    }
+    .gpu-field input:focus { outline: none; border-color: var(--accent); }
 
     .remove-btn {
         background: none;
         border: none;
         color: var(--text-muted);
         cursor: pointer;
-        font-size: 0.9rem;
-        padding: 2px 6px;
-        border-radius: 4px;
+        font-size: 0.82rem;
+        padding: 1px 4px;
+        border-radius: 3px;
+        line-height: 1;
         transition: color 0.15s;
     }
 
-    .remove-btn:hover {
-        color: var(--error);
-    }
+    .remove-btn:hover { color: var(--error); }
 
     .link-btn {
         background: none;
@@ -289,16 +300,6 @@
         text-decoration: underline;
         padding: 0;
         font-size: inherit;
-    }
-
-    .muted {
-        font-size: 0.85rem;
-        color: var(--text-muted);
-        margin: 0;
-    }
-
-    .hint {
-        font-size: 0.75rem;
-        color: var(--text-muted);
+        font-family: inherit;
     }
 </style>

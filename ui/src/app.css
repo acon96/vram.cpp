@@ -91,3 +91,35 @@ body {
     /* Full app is rendered inside here by Svelte */
     min-height: 100vh;
 }
+
+/* ── Shared form controls ───────────────────────────────────────────── */
+/* These are element-level globals so all components benefit without
+   duplicating identical rules. Component-scoped selectors take precedence
+   for any overrides. */
+input[type='text'],
+input[type='number'],
+input[type='password'],
+select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-family: inherit;
+    transition: border-color 0.15s;
+}
+
+input[type='text']:focus,
+input[type='number']:focus,
+input[type='password']:focus,
+select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+input[type='range'] {
+    accent-color: var(--accent);
+}

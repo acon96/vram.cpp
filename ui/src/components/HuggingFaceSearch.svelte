@@ -631,6 +631,8 @@
         display: flex;
         flex-direction: column;
         gap: 12px;
+        overflow-y: auto;
+        min-height: 0;
     }
 
     .repo-select {
@@ -654,17 +656,6 @@
         display: grid;
         grid-template-columns: 1fr auto auto;
         gap: 10px;
-    }
-
-    input,
-    select {
-        width: 100%;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--input-bg);
-        color: var(--text-primary);
-        padding: 10px;
-        font: inherit;
     }
 
     button {
