@@ -30,7 +30,10 @@ export function buildHfSelectionCacheKey(selection) {
 
 /**
  * Build a list of byte-range requests growing from initialBytes to maxBytes
- * in steps of stepBytes.  Returns [{ start, end }, ...].
+ * in steps of stepBytes.  Each entry describes only the NEW bytes to fetch
+ * for that step (incremental, not cumulative from 0).
+ * The caller is responsible for concatenating received chunks.
+ * Returns [{ start, end }, ...].
  */
 export function buildHfRangePlan(initialBytes, maxBytes, stepBytes) {
     const plan = [];
@@ -40,12 +43,46 @@ export function buildHfRangePlan(initialBytes, maxBytes, stepBytes) {
         : Math.min(2 * 1024 * 1024, Math.trunc(maxBytes));
     const step = Number.isFinite(stepBytes) && stepBytes > 0 ? Math.trunc(stepBytes) : first;
     if (first <= 0 || step <= 0) return plan;
-    for (let cur = first; cur <= maxBytes; cur += step) {
-        plan.push({ start: 0, end: cur - 1 });
+    // First step: always start from 0
+    plan.push({ start: 0, end: Math.min(first, maxBytes) - 1 });
+    // Subsequent steps: fetch only the new chunk
+    for (let cur = first + step; cur <= maxBytes; cur += step) {
+        plan.push({ start: plan[plan.length - 1].end + 1, end: Math.min(cur, maxBytes) - 1 });
     }
     const lastEnd = plan.length > 0 ? plan[plan.length - 1].end : -1;
-    if (lastEnd + 1 < maxBytes) plan.push({ start: 0, end: Math.trunc(maxBytes) - 1 });
+    if (lastEnd + 1 < maxBytes) {
+        plan.push({ start: lastEnd + 1, end: Math.trunc(maxBytes) - 1 });
+    }
     return plan;
+}
+
+/**
+ * Detect a shard pattern in a filename or URL path component.
+ * Returns { prefix, shardNo, totalShards } (1-based shardNo) or null.
+ * Example: "model-00001-of-00007.gguf" → { prefix: "model", shardNo: 1, totalShards: 7 }
+ */
+export function detectShardPattern(filenameOrUrl) {
+    const filename = String(filenameOrUrl || '').split('/').filter(Boolean).pop() || '';
+    const match = /^(.+)-(\d{5})-of-(\d{5})\.gguf$/i.exec(filename);
+    if (!match) return null;
+    return {
+        prefix: match[1],
+        shardNo: parseInt(match[2], 10),
+        totalShards: parseInt(match[3], 10),
+    };
+}
+
+/**
+ * Replace the shard number in a URL to target a different shard.
+ * Operates on the last path component only.
+ */
+export function buildShardUrl(primaryUrl, targetShardNo, totalShards) {
+    const n = String(targetShardNo).padStart(5, '0');
+    const t = String(totalShards).padStart(5, '0');
+    return String(primaryUrl).replace(
+        /-(\d{5})-of-(\d{5})\.gguf(\?.*)?$/i,
+        `-${n}-of-${t}.gguf$3`,
+    );
 }
 
 /**

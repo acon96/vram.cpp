@@ -552,7 +552,7 @@
         {/if}
     </div>
 
-    <div class="options-column">
+    <div class="options-row">
         <label>
             Revision
             <input type="text" value={revision} oninput={handleRevisionInput} placeholder="main" />
@@ -733,9 +733,9 @@
         color: var(--text-muted);
     }
 
-    .options-column {
+    .options-row {
         display: flex;
-        flex-direction: column;
+        flex-direction: row;
         gap: 10px;
     }
 
@@ -823,6 +823,11 @@
         color: var(--text-muted);
         font-size: 0.74rem;
         overflow-wrap: anywhere;
+    }
+
+    label {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
     }
 
     @media (max-width: 900px) {

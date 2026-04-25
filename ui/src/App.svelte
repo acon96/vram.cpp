@@ -420,7 +420,7 @@
         font-size: 1.1rem;
         font-weight: 700;
         font-family: var(--mono);
-        color: var(--text-primary);
+        color: var(--text-header);
     }
 
     .tagline {
@@ -448,7 +448,7 @@
         grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
         gap: 16px;
         align-items: stretch;
-        height: 300px;
+        height: 400px;
     }
 
     @media (max-width: 800px) {

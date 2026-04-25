@@ -267,6 +267,26 @@ async function handlePredict(message) {
         installSparseLogicalSize(module, virtualPath, logicalSizeBytes, fileBytes.byteLength);
     }
 
+    // Mount stub shard files if the primary file is a sharded GGUF.
+    // llama.cpp opens sibling shards by name (e.g. model-00002-of-00007.gguf)
+    // but only reads their GGUF headers (no_alloc=true), so the stub bytes are
+    // sufficient — no tensor data is needed.
+    const shardPaths = [];
+    const rawShards = Array.isArray(message?.options?.shardFiles) ? message.options.shardFiles : [];
+    for (const shard of rawShards) {
+        if (!shard?.bytes || !shard?.shardNo) continue;
+        // Replace only the shard index in the primary filename, keeping the
+        // total shard count from the original name (e.g. 00001 -> 00002).
+        const shardName = safeName.replace(
+            /(-)\d{5}(-of-\d{5}\.gguf)$/i,
+            `$1${String(shard.shardNo).padStart(5, '0')}$2`,
+        );
+        const shardPath = `${mountRoot}/${message.jobId}_${shardName}`;
+        module.FS.writeFile(shardPath, new Uint8Array(shard.bytes));
+        shardPaths.push(shardPath);
+        debugLog('handlePredict.mountedShard', { shardPath, bytes: shard.bytes.byteLength });
+    }
+
     try {
         const request = buildPredictRequest(message.options, virtualPath);
         let response = callPredict(module, request);
@@ -279,13 +299,13 @@ async function handlePredict(message) {
 
         return response;
     } finally {
+        for (const sp of shardPaths) {
+            try { module.FS.unlink(sp); } catch (_) { /* best-effort */ }
+        }
         try {
             module.FS.unlink(virtualPath);
         } catch (error) {
-            debugError('handlePredict.unlinkError', {
-                virtualPath,
-                error,
-            });
+            debugError('handlePredict.unlinkError', { virtualPath, error });
         }
     }
 }

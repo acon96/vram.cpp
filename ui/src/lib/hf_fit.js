@@ -1,18 +1,25 @@
 /**
- * HF fit execution — iterative prefix-range fetch + WASM predict loops.
+ * HF fit execution -- iterative prefix-range fetch + WASM predict loops.
  *
  * All functions are pure (no Svelte state). Callers pass stateful bits as
  * callbacks so these remain independently testable.
  */
 
-import { extractContextLengthFromPrefix } from './gguf_utils.js';
+import { extractContextLengthFromPrefix, parseGgufSplitInfo } from './gguf_utils.js';
 import {
     buildCanonicalHfFileUrl,
     buildHfRangePlan,
     buildHfSelectionCacheKey,
+    buildShardUrl,
+    detectShardPattern,
     fetchHfPrefixBytes,
     parseTotalBytesFromFetchHeaders,
 } from './hf_utils.js';
+
+// Minimum bytes to fetch for a stub shard header.
+// Each shard GGUF header (tensor descriptors for its subset of tensors) is
+// typically well under 50 KiB; 128 KiB is a generous safety margin.
+const SHARD_HEADER_BYTES = 128 * 1024;
 
 /**
  * Assemble the cached prefetch result object from a successful metadata parse
@@ -22,11 +29,12 @@ export function buildPreparedHfFitResult(
     selection, requestUrl, requests, attempts,
     prefixBytes, fetchResult, metadataResponse,
 ) {
-    const sizeFromHeaders  = parseTotalBytesFromFetchHeaders(fetchResult);
+    const sizeFromHeaders   = parseTotalBytesFromFetchHeaders(fetchResult);
     const sizeFromSelection = Number.isFinite(Number(selection?.fileSizeBytes))
         ? Math.max(0, Math.trunc(Number(selection.fileSizeBytes))) : 0;
     const logicalFileSizeBytes = sizeFromHeaders > 0 ? sizeFromHeaders : sizeFromSelection;
     const contextLength  = extractContextLengthFromPrefix(prefixBytes);
+    const splitInfo      = parseGgufSplitInfo(prefixBytes);
     // Preserve the original HF filename so shard naming is intact when mounting.
     const originalFileName = String(selection?.file || '').split('/').filter(Boolean).pop() || 'model.gguf';
 
@@ -39,43 +47,136 @@ export function buildPreparedHfFitResult(
         prefixBytes,
         logicalFileSizeBytes,
         contextLength,
+        splitCount: splitInfo.splitCount,
+        splitNo:    splitInfo.splitNo,
         originalFileName,
         cacheKey: buildHfSelectionCacheKey({ ...selection, resolvedUrl: requestUrl }),
+        // shardHeaders populated by fetchShardHeadersIfNeeded
+        shardHeaders: [],
     };
 }
 
 /**
+ * If the prepared fit describes a sharded model (split.count > 1) fetch the
+ * GGUF headers of all remaining shards and attach them.
+ *
+ * Each shard header only needs to be large enough for gguf_init_from_file to
+ * read the tensor-descriptor section. llama.cpp opens shards with no_alloc=true
+ * so no tensor data is ever read from the stub files.
+ *
+ * @param {object} preparedFit
+ * @param {object} selection  - { token }
+ * @param {{ log: Function, error: Function }} [logger]
+ * @returns {Promise<object>} preparedFit with shardHeaders populated
+ */
+async function fetchShardHeadersIfNeeded(preparedFit, selection, logger) {
+    const { splitCount, splitNo, resolvedUrl, originalFileName } = preparedFit;
+
+    // Only shard 0 (the first file) is the entry point; split.count <= 1 means
+    // non-sharded or the key was absent.
+    if (splitCount <= 1 || splitNo !== 0) return preparedFit;
+
+    // Detect that the URL's filename contains the shard pattern.
+    const pattern = detectShardPattern(originalFileName);
+    if (!pattern) {
+        logger?.error('hf.shardHeaders.noPattern', { originalFileName, splitCount });
+        return preparedFit;
+    }
+
+    logger?.log('hf.shardHeaders.start', {
+        totalShards: splitCount,
+        pattern,
+        resolvedUrl,
+    });
+
+    const includeAuth = resolvedUrl.startsWith('https://huggingface.co/');
+    const token = (selection?.token || '').trim();
+
+    // Build fetch promises for shards 2..N (1-based shardNo).
+    const shardFetches = [];
+    for (let n = 2; n <= splitCount; n++) {
+        const shardUrl = buildShardUrl(resolvedUrl, n, splitCount);
+        shardFetches.push(
+            fetchHfPrefixBytes(shardUrl, 0, SHARD_HEADER_BYTES - 1, token, includeAuth)
+                .then((result) => ({ shardNo: n, bytes: result.bytes, ok: true }))
+                .catch((err) => ({ shardNo: n, bytes: null, ok: false, error: err?.message ?? String(err) })),
+        );
+    }
+
+    const results = await Promise.all(shardFetches);
+    const shardHeaders = [];
+    for (const r of results) {
+        if (r.ok && r.bytes != null) {
+            shardHeaders.push({ shardNo: r.shardNo, bytes: r.bytes });
+            logger?.log('hf.shardHeaders.fetched', { shardNo: r.shardNo, bytes: r.bytes.byteLength });
+        } else {
+            logger?.error('hf.shardHeaders.fetchFailed', { shardNo: r.shardNo, error: r.error });
+        }
+    }
+
+    return { ...preparedFit, shardHeaders };
+}
+
+/**
  * Mount the cached prefix bytes in the WASM FS and execute a fit predict.
+ * If preparedFit.shardHeaders is non-empty the stub shard files are mounted
+ * alongside the primary file before the fit is run.
  */
 export async function runFitFromPreparedPrefix(client, preparedFit, predictInput, logger) {
     const fileName = preparedFit.originalFileName || 'hf_cached_prefix.gguf';
     const fitFile  = new File([preparedFit.prefixBytes], fileName, { type: 'application/octet-stream' });
+
+    // Build shardFiles array for the worker.  Each entry has the 1-based
+    // shardNo and the raw Uint8Array (worker converts to ArrayBuffer).
+    const shardFiles = (preparedFit.shardHeaders || []).map((sh) => ({
+        shardNo: sh.shardNo,
+        bytes: sh.bytes,
+    }));
+
     const fitInput = {
         ...predictInput,
         virtualFileSizeBytes: preparedFit.logicalFileSizeBytes > preparedFit.prefixBytes.byteLength
             ? preparedFit.logicalFileSizeBytes : undefined,
+        shardFiles,
     };
 
     logger?.log('hf.cachedFit.start', {
-        resolvedUrl: preparedFit.resolvedUrl,
-        fitFileBytes: preparedFit.prefixBytes.byteLength,
+        resolvedUrl:          preparedFit.resolvedUrl,
+        fitFileBytes:         preparedFit.prefixBytes.byteLength,
         logicalFileSizeBytes: preparedFit.logicalFileSizeBytes,
+        shardCount:           shardFiles.length,
     });
 
     const fitResponse = await client.predictMountedFit(fitFile, fitInput);
     return {
         ...fitResponse,
-        source: 'huggingface',
+        source:     'huggingface',
         resolvedUrl: preparedFit.resolvedUrl,
-        requests: preparedFit.requests,
-        attempts: preparedFit.attempts,
+        requests:   preparedFit.requests,
+        attempts:   preparedFit.attempts,
         hfMetadata: preparedFit.metadata ?? null,
     };
+}
+
+// ---------------------------------------------------------------------------
+// Internal helper -- concatenate two Uint8Arrays without extra copies.
+// ---------------------------------------------------------------------------
+function concatBytes(a, b) {
+    if (a.byteLength === 0) return b;
+    if (b.byteLength === 0) return a;
+    const out = new Uint8Array(a.byteLength + b.byteLength);
+    out.set(a, 0);
+    out.set(b, a.byteLength);
+    return out;
 }
 
 /**
  * Progressively fetch HF file prefix bytes and parse GGUF metadata until
  * the parser is satisfied or we exhaust the range plan.
+ *
+ * Each iteration fetches ONLY the new bytes for that step (the plan now
+ * returns incremental ranges). Bytes are accumulated in memory so the WASM
+ * parser always receives the full prefix from byte 0.
  *
  * @param {object} client - predictor worker client
  * @param {object} selection - { repo, file, revision, token, resolvedUrl, ... }
@@ -115,6 +216,8 @@ export async function runHfMetadataFromBrowser(client, selection, { rangeConfig,
         const attempts = [];
         let lastErrorResponse = null;
         let fetchFailure = null;
+        let accumulatedBytes = new Uint8Array(0);
+        let lastFetchResult = null;
 
         for (let ai = 0; ai < plan.length; ai++) {
             const range = plan[ai];
@@ -145,28 +248,40 @@ export async function runHfMetadataFromBrowser(client, selection, { rangeConfig,
                 break;
             }
 
-            const prefixBytes = fetchResult.bytes;
-            const localRequest = buildMetadataRequest(prefixBytes.byteLength);
-            const localFile = new File([prefixBytes], `hf_prefix_${range.end + 1}.gguf`, { type: 'application/octet-stream' });
+            // Accumulate: only new bytes are received per step.
+            accumulatedBytes = concatBytes(accumulatedBytes, fetchResult.bytes);
+            lastFetchResult  = fetchResult;
+
+            const localRequest = buildMetadataRequest(accumulatedBytes.byteLength);
+            const localFile = new File(
+                [accumulatedBytes],
+                `hf_prefix_${accumulatedBytes.byteLength}.gguf`,
+                { type: 'application/octet-stream' },
+            );
             const response = await client.predictMountedJson(localFile, localRequest);
 
             attempts.push({
                 ai, start: range.start, end: range.end,
-                fetchedBytes: prefixBytes.byteLength,
+                fetchedChunkBytes: fetchResult.bytes.byteLength,
+                totalAccumulatedBytes: accumulatedBytes.byteLength,
                 httpStatus: fetchResult.httpStatus,
-                finalUrl: fetchResult.finalUrl,
+                finalUrl:   fetchResult.finalUrl,
                 contentRange: fetchResult.contentRange,
-                parserOk: response?.ok === true,
+                parserOk:   response?.ok === true,
                 parserError: response?.error || '',
                 minimumRequiredBytes: response?.minimumRequiredBytes || 0,
                 bytesConsumed: response?.metadata?.bytesConsumed || 0,
             });
 
             if (response?.ok === true) {
-                logger?.log('hf.browserMetadata.success', { ai, fetchedBytes: prefixBytes.byteLength });
-                return buildPreparedHfFitResult(
-                    selection, requestUrl, requests, attempts, prefixBytes, fetchResult, response,
+                logger?.log('hf.browserMetadata.success', {
+                    ai, totalBytes: accumulatedBytes.byteLength,
+                });
+                const prepared = buildPreparedHfFitResult(
+                    selection, requestUrl, requests, attempts,
+                    accumulatedBytes, lastFetchResult, response,
                 );
+                return fetchShardHeadersIfNeeded(prepared, selection, logger);
             }
 
             lastErrorResponse = response;
@@ -234,6 +349,8 @@ export async function runHfFitFromBrowser(client, selection, predictInput, { ran
         const attempts = [];
         let lastErrorResponse = null;
         let fetchFailure = null;
+        let accumulatedBytes = new Uint8Array(0);
+        let lastFetchResult = null;
 
         for (let ai = 0; ai < plan.length; ai++) {
             const range = plan[ai];
@@ -264,32 +381,44 @@ export async function runHfFitFromBrowser(client, selection, predictInput, { ran
                 break;
             }
 
-            const prefixBytes = fetchResult.bytes;
-            const localRequest = buildMetadataRequest(prefixBytes.byteLength);
-            const metadataFile = new File([prefixBytes], `hf_prefix_${range.end + 1}.gguf`, { type: 'application/octet-stream' });
+            accumulatedBytes = concatBytes(accumulatedBytes, fetchResult.bytes);
+            lastFetchResult  = fetchResult;
+
+            const localRequest = buildMetadataRequest(accumulatedBytes.byteLength);
+            const metadataFile = new File(
+                [accumulatedBytes],
+                `hf_prefix_${accumulatedBytes.byteLength}.gguf`,
+                { type: 'application/octet-stream' },
+            );
             const metadataResponse = await client.predictMountedJson(metadataFile, localRequest);
 
             attempts.push({
                 ai, start: range.start, end: range.end,
-                fetchedBytes: prefixBytes.byteLength,
+                fetchedChunkBytes: fetchResult.bytes.byteLength,
+                totalAccumulatedBytes: accumulatedBytes.byteLength,
                 httpStatus: fetchResult.httpStatus,
-                finalUrl: fetchResult.finalUrl,
+                finalUrl:   fetchResult.finalUrl,
                 contentRange: fetchResult.contentRange,
-                parserOk: metadataResponse?.ok === true,
+                parserOk:   metadataResponse?.ok === true,
                 parserError: metadataResponse?.error || '',
                 minimumRequiredBytes: metadataResponse?.minimumRequiredBytes || 0,
                 bytesConsumed: metadataResponse?.metadata?.bytesConsumed || 0,
             });
 
             if (metadataResponse?.ok === true) {
-                const preparedFit = buildPreparedHfFitResult(
-                    selection, requestUrl, requests, attempts, prefixBytes, fetchResult, metadataResponse,
+                let preparedFit = buildPreparedHfFitResult(
+                    selection, requestUrl, requests, attempts,
+                    accumulatedBytes, lastFetchResult, metadataResponse,
                 );
+                // Fetch remaining shard headers in parallel before caching so
+                // the cached preparedFit already has shardHeaders populated.
+                preparedFit = await fetchShardHeadersIfNeeded(preparedFit, selection, logger);
                 onPreparedFit?.(preparedFit);
 
                 logger?.log('hf.browserFit.fit.start', {
                     ai, fitFileBytes: preparedFit.prefixBytes.byteLength,
                     logicalFileSizeBytes: preparedFit.logicalFileSizeBytes,
+                    shardCount: preparedFit.shardHeaders?.length ?? 0,
                 });
 
                 const fitResponse = await runFitFromPreparedPrefix(client, preparedFit, predictInput, logger);

@@ -216,7 +216,7 @@
     .ctx-text {
         width: 90px !important;
         flex-shrink: 0;
-        font-family: var(--mono);
+        font-family: var(--text-muted);
         font-size: 0.85rem !important;
     }
 

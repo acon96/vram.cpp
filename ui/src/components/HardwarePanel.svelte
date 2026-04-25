@@ -11,8 +11,8 @@
     /** @type {{ params: { hostRamGiB: number, gpus: Array<{name?: string, totalGiB: number, bufferMiB: number}> }, onchange: Function }} */
     let { params, onchange } = $props();
 
-    const RAM_SNAPS = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256];
-    const MAX_GPUS  = 6;
+    const RAM_SNAPS = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 512, 768, 1024, 1536, 2048];
+    const MAX_GPUS  = 8;
 
     function ramToSliderIndex(gib) {
         let best = 0;
@@ -55,7 +55,17 @@
             value={ramToSliderIndex(params.hostRamGiB)}
             oninput={(e) => update({ hostRamGiB: RAM_SNAPS[parseInt(e.currentTarget.value, 10)] })}
         />
-        <span class="ram-value">{params.hostRamGiB} GiB</span>
+        <div id="host-ram">
+        <input
+            class="ctx-text"
+            type="number"
+            min="8"
+            max={RAM_SNAPS[RAM_SNAPS.length - 1]}
+            step="1"
+            value={params.hostRamGiB}
+            oninput={(e) => update({ hostRamGiB: parseInt(e.currentTarget.value, 10) || 0 })}
+        />
+        </div>
     </div>
 
     <div class="gpu-section">
@@ -301,5 +311,15 @@
         padding: 0;
         font-size: inherit;
         font-family: inherit;
+    }
+
+    input[type='number'] {
+        width: 100px;
+    }
+
+    #host-ram::after {
+        content: ' GiB';
+        font-family: var(--mono);
+        color: var(--text-muted);
     }
 </style>

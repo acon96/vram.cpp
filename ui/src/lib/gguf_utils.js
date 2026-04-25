@@ -181,3 +181,52 @@ export function extractContextLengthFromPrefix(prefixBytes) {
     }
     return candidates[0].value;
 }
+
+/**
+ * Scan the GGUF KV section and return split metadata.
+ * Returns { splitCount, splitNo } where both default to 0 if not present.
+ */
+export function parseGgufSplitInfo(prefixBytes) {
+    const bytes = prefixBytes instanceof Uint8Array ? prefixBytes : new Uint8Array(prefixBytes || []);
+    const result = { splitCount: 0, splitNo: 0 };
+    if (bytes.length < 24) return result;
+    if (bytes[0] !== 0x47 || bytes[1] !== 0x47 || bytes[2] !== 0x55 || bytes[3] !== 0x46) return result;
+
+    let pos = 4;
+    const version = readU32(bytes, pos);
+    if (version == null || version < 2 || version > 3) return result;
+    pos += 4;
+
+    const kvCount = readU64(bytes, pos + 8);
+    if (kvCount == null) return result;
+    pos += 16;
+
+    let found = 0;
+    for (let i = 0; i < kvCount && found < 2; i++) {
+        const key = readString(bytes, pos);
+        if (key == null) return result;
+        pos = key.next;
+
+        const t = readU32(bytes, pos);
+        if (t == null) return result;
+        pos += 4;
+
+        if (key.value === 'split.count' || key.value === 'split.no') {
+            const num = readNumeric(bytes, pos, t);
+            const next = skipValue(bytes, pos, t);
+            if (next == null) return result;
+            pos = next;
+            if (num != null && Number.isFinite(Number(num))) {
+                if (key.value === 'split.count') { result.splitCount = Math.trunc(Number(num)); found++; }
+                if (key.value === 'split.no')    { result.splitNo    = Math.trunc(Number(num)); found++; }
+            }
+            continue;
+        }
+
+        const next = skipValue(bytes, pos, t);
+        if (next == null) return result;
+        pos = next;
+    }
+
+    return result;
+}
