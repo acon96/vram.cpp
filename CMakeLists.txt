@@ -72,30 +72,16 @@ if(EMSCRIPTEN AND TARGET llama-common)
     # available in the non-pthreads browser build used here.
     target_compile_definitions(llama-common PRIVATE VRAM_EMSCRIPTEN_SYNC_FIT_LOGS=1)
 
-    # Build a patched fit.cpp copy in the build tree instead of mutating
-    # vendor/llama-cpp in-place.
     set(LLAMA_PATCH_FILE "${CMAKE_CURRENT_SOURCE_DIR}/patches/llama-emscripten-sync-fit-logs.patch")
+    set(LLAMA_PATCH_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp")
     set(LLAMA_FIT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama-cpp/common/fit.cpp")
-    set(LLAMA_FIT_OVERLAY_DIR "${CMAKE_CURRENT_BINARY_DIR}/llama-overlay")
-    set(LLAMA_FIT_PATCHED "${LLAMA_FIT_OVERLAY_DIR}/common/fit.cpp")
+    set(LLAMA_FIT_BACKUP "${CMAKE_CURRENT_BINARY_DIR}/llama-fit.cpp.backup")
+    set(LLAMA_FIT_COMPILE_WRAPPER "${CMAKE_CURRENT_SOURCE_DIR}/scripts/wrap_fit_compile.sh")
 
-    add_custom_command(
-        OUTPUT "${LLAMA_FIT_PATCHED}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${LLAMA_FIT_OVERLAY_DIR}/common"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${LLAMA_FIT_SOURCE}" "${LLAMA_FIT_PATCHED}"
-        COMMAND bash -c "cd '${LLAMA_FIT_OVERLAY_DIR}' && patch -p1 < '${LLAMA_PATCH_FILE}'"
-        DEPENDS "${LLAMA_PATCH_FILE}" "${LLAMA_FIT_SOURCE}"
-        COMMENT "[vram.cpp] Generating patched build-local common/fit.cpp"
-        VERBATIM
-    )
-
-    add_custom_target(llama_fit_overlay DEPENDS "${LLAMA_FIT_PATCHED}")
-    add_dependencies(llama-common llama_fit_overlay)
-
-    # Keep the original vendor source listed but non-compiling, and compile
-    # the build-local patched copy instead.
-    set_source_files_properties("${LLAMA_FIT_SOURCE}" PROPERTIES HEADER_FILE_ONLY TRUE)
-    target_sources(llama-common PRIVATE "${LLAMA_FIT_PATCHED}")
+    # Patch vendor/llama-cpp/common/fit.cpp in place only while fit.cpp.o is
+    # being compiled, then restore it immediately so the git tree stays clean.
+    set_property(TARGET llama-common PROPERTY RULE_LAUNCH_COMPILE
+        "/bin/bash ${LLAMA_FIT_COMPILE_WRAPPER} ${LLAMA_PATCH_ROOT} ${LLAMA_PATCH_FILE} ${LLAMA_FIT_SOURCE} ${LLAMA_FIT_BACKUP} --")
 endif()
 
 add_library(vram_predictor_core STATIC

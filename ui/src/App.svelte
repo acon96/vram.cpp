@@ -117,6 +117,7 @@
     let fitLogLines = $state([]);
     let activeWorkerClient = $state(null);
     let fitLogView = $state(null);
+    let hasShownMultiGpuWarning = $state(false);
 
     // ── Handlers ──────────────────────────────────────────────────────────────
     function handleModelSourceChange(nextSource) {
@@ -306,6 +307,11 @@
             if (!selectedFile) { errorMsg = 'Please select a GGUF file first.'; status = 'error'; return; }
         } else if (!hfSelection.validated) {
             errorMsg = 'Please select a valid Hugging Face model first.'; status = 'error'; return;
+        }
+
+        if (Array.isArray(params.gpus) && params.gpus.length > 1 && hasShownMultiGpuWarning !== true) {
+            window.alert('Multi-gpu fitting is still not fully supported in llama.cpp and you may receive strange results when using more than 1 GPU.');
+            hasShownMultiGpuWarning = true;
         }
 
         status = 'loading-wasm'; errorMsg = ''; result = null;

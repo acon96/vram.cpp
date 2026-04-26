@@ -259,7 +259,7 @@
 
     .gpu-card {
         flex-shrink: 0;
-        width: 196px;
+        width: 300px;
         border: 1px solid var(--border);
         border-radius: 8px;
         padding: 8px;

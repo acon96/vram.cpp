@@ -440,6 +440,11 @@ async function handlePredict(message) {
         let response = callPredict(module, request);
 
         if (isThreadCtorError(response) && request.show_fit_logs) {
+            postFitProgress(message.jobId, {
+                lastLine: 'Fit log stream unavailable in this build; retrying without fit logs.',
+                rawLine: '[warning] Fit log stream unavailable in this build; retrying without fit logs.',
+                stream: 'stderr',
+            });
             debugError('handlePredict.retryWithoutFitLogs', { firstResponse: response });
             request.show_fit_logs = false;
             response = callPredict(module, request);
