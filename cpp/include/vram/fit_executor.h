@@ -60,8 +60,6 @@ struct fit_execution_result {
     fit_memory_breakdown_entry host;
 };
 
-bool fit_execution_available();
-
 bool execute_fit_request(const fit_execution_request & request, fit_execution_result & result, std::string & error);
 
 } // namespace vram

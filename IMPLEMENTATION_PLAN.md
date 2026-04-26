@@ -289,7 +289,9 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - Removed global fitTargetMiB/targetFreeMiB; replaced with per-GPU `bufferMiB` (keep-free margin) fed to both fit_target_mib and target_free_mib in the fit engine.
 - [x] KV cache quantization types are only FP16, Q8_0 and Q4_0. remove all other options
 - [x] split gguf files: use original HF filename when mounting prefix bytes in WASM FS so llama.cpp sees the correct shard naming convention
-- [ ] using multiple GPUs seems to cause the fit execution to fail in strange ways; best guess is that the simulated backend devices are violating the contract in some subtle way because I keep seeing it assign all layers to 1 GPU instead of spreading out the layers as evenly as possible amongst all GPUs.
+- [ ] There is something wrong with the re-implementation of the tensor attribution code. We should just use the stock code in fit.cpp instead of re-writing it ourself and breaking something in the process
+  - `fill_breakdown_fallback` shouldn't exist at all. if it fails, we have a problem
+  - replace `collect_memory_breakdown` with `common_get_device_memory_data` from `fit.cpp`; they effectively do the same thing and our version is reporting weird things with multi-gpus
 
 ### Tweaks:
 - [x] Auto assign the device index based on the order they are in the UI. the user doesn't need to select them directly
@@ -309,6 +311,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - [x] reduce the number of "build targets" for the cpp part of the project. 
   - there shouldn't be the ability to build **without** llama.cpp vendored in. unit testing against the core logic without llama.cpp doesn't help a ton since the main point of the project is to run the actual llama-fit code in wasm or native.
   - removed the old optional-vendor CMake path and the related `VRAM_ENABLE_VENDOR_LLAMA` / `VRAM_HAS_LLAMA_FIT_EXECUTION` compatibility branches.
+- [ ] remove the "parroting" back of values in `fit_execution_result` `fit_execution_request` and just generally make that API interface simpler, there's a ton of unnecessary info being passed around there
 - [ ] Work through the entire codebase and find any unnecessary complications in the arguments, responses, and API surfaces. 
   - The goal would be to remove extra logic and handling for scenarios that don't exist in the codebase.
   - Basically a reverse YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.

@@ -131,3 +131,16 @@ npm run build
 - Commit regularly with small, reviewable checkpoints.
 - Avoid direct edits inside `vendor/llama-cpp` unless the task is explicitly about vendor patch maintenance; prefer patch-based updates under `patches/`.
 - If a task touches wasm fit logging behavior, update both the live vendor delta and `patches/llama-emscripten-sync-fit-logs.patch`.
+- If a file becomes corrupted while editing it, the fastest way to clean it up is to delete the file and then create it again with the create file tool.
+  - Do NOT try to run a python script or write to other arbitrary files to try and replace the file.
+  - If the file you are re-creating is long, then you must do it in multiple smaller chunks by first creating the file and then appending to it with the edit file tool. - This is because the edit file tool has a token limit and if you exceed it, the file will become corrupted again.
+
+## Common Deliverables
+- When implementing a new feature or fixing a bug, the expected deliverables are:
+  - The updated code checked into the repository with a clear commit message.
+  - Updated or new tests that validate the change.
+  - If the change affects the API contract, an update to `docs/API.md` reflecting the new request/response shapes.
+  - Building and testing the change locally to ensure it works as expected before committing.
+- Do not give a large summary when finishing your change. You can just respond saying you are done. 
+  - The commit message and code comments should be enough to explain the change.
+  - If you need to provide additional context, consider adding comments in the code or updating the relevant documentation files instead.

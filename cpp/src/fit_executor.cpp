@@ -53,14 +53,6 @@ uint64_t saturating_add_u64(uint64_t a, uint64_t b) {
     return a + b;
 }
 
-struct fit_memory_row_bytes {
-    uint64_t total = 0;
-    uint64_t free = 0;
-    uint64_t model = 0;
-    uint64_t context = 0;
-    uint64_t compute = 0;
-};
-
 void discard_log_callback(ggml_log_level, const char *, void *) {
 }
 
@@ -75,35 +67,36 @@ void emscripten_passthrough_log_callback(ggml_log_level level, const char * text
     std::fflush(stream);
 }
 
+// Mirrors the layout and logic of common_get_device_memory_data from vendor/llama-cpp/common/fit.cpp.
+// Loads the model with no_alloc=true, creates a context, reads the memory breakdown, and maps
+// each buffer-type's model/context/compute bytes to its device.  The last entry is always host.
 bool collect_memory_breakdown(
         const std::string & model_path,
         const llama_model_params & model_params,
         const llama_context_params & context_params,
-        const std::vector<sim_device_spec> & simulated_devices,
-        bool emit_debug_logs,
         bool host_override_enabled,
         uint64_t host_override_free_mib,
         uint64_t host_override_total_mib,
         fit_execution_result & result,
         std::string & error) {
-    llama_model_params adjusted_model_params = model_params;
-    adjusted_model_params.no_alloc = true;
-    adjusted_model_params.use_mmap = false;
-    adjusted_model_params.use_mlock = false;
+    llama_model_params mparams_copy = model_params;
+    mparams_copy.no_alloc  = true;
+    mparams_copy.use_mmap  = false;
+    mparams_copy.use_mlock = false;
 
-    llama_context_params adjusted_context_params = context_params;
+    llama_context_params cparams_copy = context_params;
 #if defined(__EMSCRIPTEN__)
-    adjusted_context_params.n_threads = 1;
-    adjusted_context_params.n_threads_batch = 1;
+    cparams_copy.n_threads       = 1;
+    cparams_copy.n_threads_batch = 1;
 #endif
 
-    llama_model * model = llama_model_load_from_file(model_path.c_str(), adjusted_model_params);
+    llama_model * model = llama_model_load_from_file(model_path.c_str(), mparams_copy);
     if (model == nullptr) {
         error = "failed_to_load_model_for_memory_breakdown";
         return false;
     }
 
-    llama_context * ctx = llama_init_from_model(model, adjusted_context_params);
+    llama_context * ctx = llama_init_from_model(model, cparams_copy);
     if (ctx == nullptr) {
         llama_model_free(model);
         error = "failed_to_create_context_for_memory_breakdown";
@@ -111,196 +104,135 @@ bool collect_memory_breakdown(
     }
 
     const int nd = llama_model_n_devices(model);
-    std::vector<ggml_backend_dev_t> devices;
-    devices.reserve(static_cast<size_t>(std::max(0, nd)));
-    for (int i = 0; i < nd; ++i) {
-        devices.push_back(llama_model_get_device(model, i));
-        if (emit_debug_logs) {
-            std::fprintf(stderr,
-                "[vram-fit] breakdown model_device[%d]=%p name=%s desc=%s\n",
-                i,
-                (void *) devices.back(),
-                devices.back() ? ggml_backend_dev_name(devices.back()) : "<null>",
-                devices.back() ? ggml_backend_dev_description(devices.back()) : "<null>");
-        }
-    }
 
-    std::vector<fit_memory_row_bytes> device_rows(devices.size());
-    fit_memory_row_bytes host_row = {};
+    // nd+1 entries: [0..nd-1] are devices, [nd] is host — same layout as common_get_device_memory_data
+    struct memory_row {
+        uint64_t total     = 0;
+        uint64_t free      = 0;
+        uint64_t model_b   = 0;
+        uint64_t context_b = 0;
+        uint64_t compute_b = 0;
+    };
+    std::vector<memory_row> rows(static_cast<size_t>(std::max(0, nd)) + 1);
+    memory_row & host_row = rows.back();
 
     const llama_memory_breakdown breakdown = llama_get_memory_breakdown(ctx);
-    for (const auto & buft_mb : breakdown) {
-        ggml_backend_buffer_type_t buft = buft_mb.first;
-        const llama_memory_breakdown_data & mb = buft_mb.second;
+    for (const auto & buft_entry : breakdown) {
+        ggml_backend_buffer_type_t buft = buft_entry.first;
+        const llama_memory_breakdown_data & mb = buft_entry.second;
 
         if (ggml_backend_buft_is_host(buft)) {
-            if (emit_debug_logs) {
-                std::fprintf(stderr,
-                    "[vram-fit] breakdown buft=%p name=%s host=1 model=%zu context=%zu compute=%zu\n",
-                    (void *) buft, ggml_backend_buft_name(buft),
-                    mb.model, mb.context, mb.compute);
-            }
-            host_row.model += static_cast<uint64_t>(mb.model);
-            host_row.context += static_cast<uint64_t>(mb.context);
-            host_row.compute += static_cast<uint64_t>(mb.compute);
+            host_row.model_b   += static_cast<uint64_t>(mb.model);
+            host_row.context_b += static_cast<uint64_t>(mb.context);
+            host_row.compute_b += static_cast<uint64_t>(mb.compute);
             continue;
         }
 
         ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
         if (dev == nullptr) {
-            if (emit_debug_logs) {
-                std::fprintf(stderr,
-                    "[vram-fit] breakdown buft=%p name=%s host=0 dev=<null> model=%zu context=%zu compute=%zu\n",
-                    (void *) buft, ggml_backend_buft_name(buft),
-                    mb.model, mb.context, mb.compute);
-            }
             continue;
         }
 
-        bool matched = false;
-        for (size_t i = 0; i < devices.size(); ++i) {
-            if (devices[i] == dev) {
-                device_rows[i].model += static_cast<uint64_t>(mb.model);
-                device_rows[i].context += static_cast<uint64_t>(mb.context);
-                device_rows[i].compute += static_cast<uint64_t>(mb.compute);
-                if (emit_debug_logs) {
-                    std::fprintf(stderr,
-                        "[vram-fit] breakdown buft=%p name=%s host=0 dev=%p -> model_device[%zu] model=%zu context=%zu compute=%zu\n",
-                        (void *) buft, ggml_backend_buft_name(buft), (void *) dev,
-                        i, mb.model, mb.context, mb.compute);
-                }
-                matched = true;
+        // Match using llama_model_get_device — same as common_get_device_memory_data
+        for (int i = 0; i < nd; ++i) {
+            if (dev == llama_model_get_device(model, i)) {
+                rows[i].model_b   += static_cast<uint64_t>(mb.model);
+                rows[i].context_b += static_cast<uint64_t>(mb.context);
+                rows[i].compute_b += static_cast<uint64_t>(mb.compute);
                 break;
             }
         }
-        if (emit_debug_logs && !matched) {
-            std::fprintf(stderr,
-                "[vram-fit] breakdown buft=%p name=%s host=0 dev=%p unmatched model=%zu context=%zu compute=%zu\n",
-                (void *) buft, ggml_backend_buft_name(buft), (void *) dev,
-                mb.model, mb.context, mb.compute);
-        }
     }
 
+    // Get host memory
     if (host_override_enabled) {
-        const uint64_t host_free_mib = host_override_free_mib > 0 ? host_override_free_mib : host_override_total_mib;
-        const uint64_t host_total_mib = host_override_total_mib > 0 ? host_override_total_mib : host_free_mib;
-        host_row.free = host_free_mib * MiB;
-        host_row.total = std::max(host_row.free, host_total_mib * MiB);
+        const uint64_t h_free  = host_override_free_mib  > 0 ? host_override_free_mib  : host_override_total_mib;
+        const uint64_t h_total = host_override_total_mib > 0 ? host_override_total_mib : h_free;
+        host_row.free  = h_free  * MiB;
+        host_row.total = std::max(h_free, h_total) * MiB;
     } else {
         ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
         if (cpu != nullptr) {
-            size_t host_free = 0;
-            size_t host_total = 0;
-            ggml_backend_dev_memory(cpu, &host_free, &host_total);
-            host_row.free = static_cast<uint64_t>(host_free);
-            host_row.total = static_cast<uint64_t>(host_total);
+            size_t cpu_free = 0, cpu_total = 0;
+            ggml_backend_dev_memory(cpu, &cpu_free, &cpu_total);
+            host_row.free  = static_cast<uint64_t>(cpu_free);
+            host_row.total = static_cast<uint64_t>(cpu_total);
         }
     }
 
-    for (size_t i = 0; i < device_rows.size(); ++i) {
-        size_t free_b = 0;
-        size_t total_b = 0;
-        ggml_backend_dev_memory(devices[i], &free_b, &total_b);
-
-        if (free_b == 0 && total_b == 0) {
-            if (i < simulated_devices.size()) {
-                free_b = static_cast<size_t>(simulated_devices[i].free_bytes);
-                total_b = static_cast<size_t>(std::max(simulated_devices[i].total_bytes, simulated_devices[i].free_bytes));
-            } else {
-                free_b = static_cast<size_t>(host_row.free);
-                total_b = static_cast<size_t>(host_row.total);
-            }
+    // Get device free/total; fall back to host memory when device reports 0/0
+    // (matches stock common_get_device_memory_data behavior)
+    for (int i = 0; i < nd; ++i) {
+        size_t dev_free = 0, dev_total = 0;
+        ggml_backend_dev_memory(llama_model_get_device(model, i), &dev_free, &dev_total);
+        if (dev_free == 0 && dev_total == 0) {
+            dev_free  = static_cast<size_t>(host_row.free);
+            dev_total = static_cast<size_t>(host_row.total);
         }
-
-        device_rows[i].free = static_cast<uint64_t>(free_b);
-        device_rows[i].total = static_cast<uint64_t>(total_b);
-        if (emit_debug_logs) {
-            std::fprintf(stderr,
-                "[vram-fit] breakdown device[%zu] free=%zu total=%zu\n",
-                i, free_b, total_b);
-        }
+        rows[i].free  = static_cast<uint64_t>(dev_free);
+        rows[i].total = static_cast<uint64_t>(dev_total);
     }
 
+    // Build result — access device names before freeing model
     result.devices.clear();
     result.totals = {};
-    result.devices.reserve(device_rows.size());
+    result.devices.reserve(static_cast<size_t>(std::max(0, nd)));
 
-    for (size_t i = 0; i < device_rows.size(); ++i) {
-        const fit_memory_row_bytes & row = device_rows[i];
-        const uint64_t total_b = row.total;
-        const uint64_t free_b = row.free;
-        const uint64_t model_b = row.model;
-        const uint64_t context_b = row.context;
-        const uint64_t compute_b = row.compute;
-        const uint64_t self_b = model_b + context_b + compute_b;
-        const bool overcommitted = self_b > free_b;
-        const uint64_t unaccounted_b = overcommitted ? 0 : total_b - self_b - free_b;
+    for (int i = 0; i < nd; ++i) {
+        const memory_row & row = rows[i];
+        const uint64_t self_b        = row.model_b + row.context_b + row.compute_b;
+        const bool overcommitted     = self_b > row.free;
+        const uint64_t used_b        = saturating_add_u64(self_b, row.free);
+        const uint64_t unaccounted_b = (!overcommitted && row.total > used_b) ? row.total - used_b : 0;
+
         if (overcommitted) {
             result.warnings.push_back("memory_breakdown_overcommitted_device_" + std::to_string(i));
-            if (emit_debug_logs) {
-                std::fprintf(stderr,
-                    "[vram-fit] breakdown overcommit device[%zu]: self=%llu free=%llu over_free=%llu total=%llu\n",
-                    i,
-                    static_cast<unsigned long long>(self_b),
-                    static_cast<unsigned long long>(free_b),
-                    static_cast<unsigned long long>(self_b - free_b),
-                    static_cast<unsigned long long>(total_b));
-            }
         }
 
         fit_memory_breakdown_entry entry;
-        if (i < simulated_devices.size() && !simulated_devices[i].name.empty()) {
-            entry.name = simulated_devices[i].name;
-        } else if (i < devices.size() && devices[i] != nullptr) {
-            entry.name = std::string(ggml_backend_dev_name(devices[i])) + " (" + ggml_backend_dev_description(devices[i]) + ")";
+        ggml_backend_dev_t dev = llama_model_get_device(model, i);
+        if (dev != nullptr) {
+            entry.name = std::string(ggml_backend_dev_name(dev)) + " (" + ggml_backend_dev_description(dev) + ")";
         } else {
             entry.name = "GPU " + std::to_string(i);
         }
-        entry.total_mib = bytes_to_mib_floor(total_b);
-        entry.free_mib = bytes_to_mib_floor(free_b);
-        entry.model_mib = bytes_to_mib_floor(model_b);
-        entry.context_mib = bytes_to_mib_floor(context_b);
-        entry.compute_mib = bytes_to_mib_floor(compute_b);
+        entry.total_mib       = bytes_to_mib_floor(row.total);
+        entry.free_mib        = bytes_to_mib_floor(row.free);
+        entry.model_mib       = bytes_to_mib_floor(row.model_b);
+        entry.context_mib     = bytes_to_mib_floor(row.context_b);
+        entry.compute_mib     = bytes_to_mib_floor(row.compute_b);
         entry.unaccounted_mib = bytes_to_mib_floor(unaccounted_b);
         result.devices.push_back(entry);
 
-        result.totals.model_mib += entry.model_mib;
+        result.totals.model_mib   += entry.model_mib;
         result.totals.context_mib += entry.context_mib;
         result.totals.compute_mib += entry.compute_mib;
     }
 
-    const uint64_t host_total_b = host_row.total;
-    const uint64_t host_free_b = host_row.free;
-    const uint64_t host_model_b = host_row.model;
-    const uint64_t host_context_b = host_row.context;
-    const uint64_t host_compute_b = host_row.compute;
-    const uint64_t host_self_b = host_model_b + host_context_b + host_compute_b;
-    const bool host_overcommitted = host_self_b > host_free_b;
-    const uint64_t host_unaccounted_b = host_overcommitted ? 0 : host_total_b - host_self_b - host_free_b;
-    if (host_overcommitted) {
-        result.warnings.push_back("memory_breakdown_overcommitted_host");
-        if (emit_debug_logs) {
-            std::fprintf(stderr,
-                "[vram-fit] breakdown overcommit host: self=%llu free=%llu over_free=%llu total=%llu\n",
-                static_cast<unsigned long long>(host_self_b),
-                static_cast<unsigned long long>(host_free_b),
-                static_cast<unsigned long long>(host_self_b - host_free_b),
-                static_cast<unsigned long long>(host_total_b));
+    // Build host entry
+    {
+        const uint64_t self_b        = host_row.model_b + host_row.context_b + host_row.compute_b;
+        const bool overcommitted     = self_b > host_row.free;
+        const uint64_t used_b        = saturating_add_u64(self_b, host_row.free);
+        const uint64_t unaccounted_b = (!overcommitted && host_row.total > used_b) ? host_row.total - used_b : 0;
+
+        if (overcommitted) {
+            result.warnings.push_back("memory_breakdown_overcommitted_host");
         }
+
+        result.host = {};
+        result.host.name            = "Host";
+        result.host.total_mib       = bytes_to_mib_floor(host_row.total);
+        result.host.free_mib        = bytes_to_mib_floor(host_row.free);
+        result.host.model_mib       = bytes_to_mib_floor(host_row.model_b);
+        result.host.context_mib     = bytes_to_mib_floor(host_row.context_b);
+        result.host.compute_mib     = bytes_to_mib_floor(host_row.compute_b);
+        result.host.unaccounted_mib = bytes_to_mib_floor(unaccounted_b);
+
+        result.totals.model_mib   += result.host.model_mib;
+        result.totals.context_mib += result.host.context_mib;
+        result.totals.compute_mib += result.host.compute_mib;
     }
-
-    result.host = {};
-    result.host.name = "Host";
-    result.host.total_mib = bytes_to_mib_floor(host_total_b);
-    result.host.free_mib = bytes_to_mib_floor(host_free_b);
-    result.host.model_mib = bytes_to_mib_floor(host_model_b);
-    result.host.context_mib = bytes_to_mib_floor(host_context_b);
-    result.host.compute_mib = bytes_to_mib_floor(host_compute_b);
-    result.host.unaccounted_mib = bytes_to_mib_floor(host_unaccounted_b);
-
-    result.totals.model_mib += result.host.model_mib;
-    result.totals.context_mib += result.host.context_mib;
-    result.totals.compute_mib += result.host.compute_mib;
 
     llama_free(ctx);
     llama_model_free(model);
@@ -308,40 +240,7 @@ bool collect_memory_breakdown(
     return true;
 }
 
-void fill_breakdown_fallback(
-        const std::vector<sim_device_spec> & simulated_devices,
-        bool host_override_enabled,
-        uint64_t host_override_free_mib,
-        uint64_t host_override_total_mib,
-        fit_execution_result & result) {
-    result.totals = {};
-    result.devices.clear();
-    result.devices.reserve(simulated_devices.size());
-
-    for (size_t i = 0; i < simulated_devices.size(); ++i) {
-        fit_memory_breakdown_entry entry;
-        entry.name = simulated_devices[i].name.empty() ? "GPU " + std::to_string(i) : simulated_devices[i].name;
-        entry.total_mib = simulated_devices[i].total_bytes / MiB;
-        entry.free_mib = simulated_devices[i].free_bytes / MiB;
-        result.devices.push_back(entry);
-    }
-
-    result.host = {};
-    result.host.name = "Host";
-
-    if (host_override_enabled) {
-        const uint64_t host_free = host_override_free_mib > 0 ? host_override_free_mib : host_override_total_mib;
-        const uint64_t host_total = host_override_total_mib > 0 ? host_override_total_mib : host_free;
-        result.host.free_mib = host_free;
-        result.host.total_mib = std::max(host_total, host_free);
-    }
-}
-
 } // namespace
-
-bool fit_execution_available() {
-    return true;
-}
 
 bool execute_fit_request(const fit_execution_request & request, fit_execution_result & result, std::string & error) {
     std::string phase = "initialization";
@@ -392,6 +291,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     cparams.n_threads_batch = 1;
 #endif
     mparams.n_gpu_layers = request.n_gpu_layers;
+    mparams.split_mode = LLAMA_SPLIT_MODE_LAYER; // FIXME: expose as an option to user
 
     std::vector<float> tensor_split(llama_max_devices(), 0.0f);
     std::vector<llama_model_tensor_buft_override> tbo(llama_max_tensor_buft_overrides());
@@ -528,34 +428,12 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
                 request.model_path,
                 mparams,
                 cparams,
-                request.simulated_devices,
-            request.show_fit_logs,
                 result.host_override_enabled,
                 result.host_free_mib,
                 result.host_total_mib,
                 result,
                 error)) {
-#if defined(__EMSCRIPTEN__)
-            if (request.show_fit_logs) {
-                std::fprintf(stderr,
-                    "[vram-fit] collect_memory_breakdown failed error=%s fitted_n_ctx=%u fitted_n_gpu_layers=%d\n",
-                    error.c_str(),
-                    cparams.n_ctx,
-                    mparams.n_gpu_layers);
-                std::fflush(stderr);
-            }
-#endif
-            result.warnings.push_back("memory_breakdown_unavailable");
-            if (!error.empty()) {
-                result.warnings.push_back("memory_breakdown_error[" + error + "]");
-            }
-            fill_breakdown_fallback(
-                request.simulated_devices,
-                result.host_override_enabled,
-                result.host_free_mib,
-                result.host_total_mib,
-                result);
-            error.clear();
+            return false;
         }
     }
 
