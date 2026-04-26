@@ -133,24 +133,6 @@ json fit_memory_entry_to_json(const vram::fit_memory_breakdown_entry & entry) {
     };
 }
 
-json fit_targets_to_json(const std::vector<uint64_t> & fit_target_mib, const std::vector<uint64_t> & target_free_mib) {
-    return {
-        {"fitMiB", fit_target_mib},
-        {"targetFreeMiB", target_free_mib},
-    };
-}
-
-json fit_overrides_to_json(
-    const std::vector<uint64_t> & device_free_mib,
-    const std::vector<uint64_t> & device_total_mib,
-    uint64_t host_free_mib) {
-    return {
-        {"deviceFreeMiB", device_free_mib},
-        {"deviceTotalMiB", device_total_mib},
-        {"hostFreeMiB", host_free_mib},
-    };
-}
-
 json fit_memory_bytes_to_json(const vram::fit_execution_result & result) {
     return {
         {"weights", result.totals.model_mib * 1024ULL * 1024ULL},
@@ -434,8 +416,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 {"ok", exec_result.ok},
                 {"fit",
                     {
-                        {"targets", fit_targets_to_json(exec_result.fit_target_mib, target_free_mib)},
-                        {"overrides", fit_overrides_to_json(exec_result.device_free_mib, exec_result.device_total_mib, exec_result.host_free_mib)},
                         {"recommended",
                             {
                                 {"n_ctx", exec_result.n_ctx},

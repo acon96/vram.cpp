@@ -54,14 +54,7 @@ struct fit_execution_result {
     int status = 0;
     uint32_t n_ctx = 0;
     int32_t n_gpu_layers = 0;
-    std::vector<uint64_t> fit_target_mib;
     std::vector<std::string> warnings;
-    bool memory_override_enabled = false;
-    std::vector<uint64_t> device_free_mib;
-    std::vector<uint64_t> device_total_mib;
-    bool host_override_enabled = false;
-    uint64_t host_free_mib = 0;
-    uint64_t host_total_mib = 0;
     fit_memory_breakdown_totals totals;
     std::vector<fit_memory_breakdown_entry> devices;
     fit_memory_breakdown_entry host;

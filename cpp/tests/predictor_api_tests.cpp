@@ -240,8 +240,6 @@ void test_fit_mode_command_planning() {
     assert(contains(body, "2048,1024"));
     assert(contains(body, "8192,6144"));
     assert(contains(body, "12288,8192"));
-    assert(contains(body, "\"targets\":{\"fitMiB\":[256,512],\"targetFreeMiB\":[2048,1024]}"));
-    assert(contains(body, "\"overrides\":{\"deviceFreeMiB\":[8192,6144],\"deviceTotalMiB\":[12288,8192],\"hostFreeMiB\":32768}"));
 }
 
 void test_fit_mode_heterogeneous_gpu_planning() {
@@ -267,8 +265,6 @@ void test_fit_mode_heterogeneous_gpu_planning() {
     const std::string body(response == nullptr ? "" : response);
 
     assert(contains(body, "\"ok\":true"));
-    assert(contains(body, "\"targets\":{\"fitMiB\":[512,768,1024],\"targetFreeMiB\":[2048]}"));
-    assert(contains(body, "\"overrides\":{\"deviceFreeMiB\":[8192,5120,20480],\"deviceTotalMiB\":[16384,12288,24576],\"hostFreeMiB\":65536}"));
 }
 
 void test_fit_mode_backend_profile_parsing() {
@@ -292,8 +288,6 @@ void test_fit_mode_backend_profile_parsing() {
 
     assert(contains(body, "\"ok\":true"));
     assert(contains(body, "\"executedInProcess\":false"));
-    assert(contains(body, "\"targets\":{\"fitMiB\":[512],\"targetFreeMiB\":[]}"));
-    assert(contains(body, "\"overrides\":{\"deviceFreeMiB\":[8192],\"deviceTotalMiB\":[12288],\"hostFreeMiB\":32768}"));
 }
 
 void test_fit_mode_invalid_backend_profile() {

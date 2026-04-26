@@ -18,7 +18,7 @@
 
     /** @type {{
      *   onselectionchange: (state: HFSelectionState) => void,
-          *   onvalidate: (selection: { repo: string, file: string, fileSizeBytes: number, revision: string, token: string, resolvedUrl: string }) => Promise<object>
+    *   onvalidate: (selection: { repo: string, file: string, fileSizeBytes: number, revision: string, token: string, resolvedUrl: string }, onStatusUpdate: (status: string) => void) => Promise<object>
      * }} */
     let { onselectionchange, onvalidate } = $props();
 
@@ -44,6 +44,7 @@
     let validating = $state(false);
     let validationError = $state('');
     let validationResponse = $state(null);
+    let validationStatus = $state('');
     let resolvingUrl = $state(false);
     let resolvedUrl = $state('');
     let resolvedUrlError = $state('');
@@ -191,6 +192,7 @@
     function resetValidationState(error = '') {
         validationResponse = null;
         validationError = error;
+        validationStatus = '';
         metadataPreviewOpen = false;
         emitSelection(false, null, error);
     }
@@ -433,6 +435,7 @@
         validating = true;
         resolvingUrl = true;
         validationError = '';
+        validationStatus = '';
         resolvedUrlError = '';
 
         let resolvedUrlForRequest = '';
@@ -459,11 +462,12 @@
                 revision: revisionName,
                 token: token.trim(),
                 resolvedUrl: resolvedUrlForRequest,
-            });
+            }, (status) => { validationStatus = status; });
 
             if (response?.ok === true && response?.metadata != null) {
                 validationResponse = response;
                 validationError = '';
+                validationStatus = '';
                 emitSelection(true, response, '');
                 return;
             }
@@ -590,6 +594,9 @@
         </button>
         {#if resolvingUrl}
             <span class="status">Resolving final file URL...</span>
+        {/if}
+        {#if validating && validationStatus}
+            <span class="status validation-step">{validationStatus}</span>
         {/if}
         {#if validationResponse?.ok === true && validationResponse?.metadata}
             <button

@@ -105,16 +105,6 @@ These contracts must stay in sync across `cpp/src/predictor_api.cpp`, the API te
       "binary": "<string>",
       "args": ["<string>", ...]
     },
-    "targets": {
-      "fitMiB": [<integer>, ...],
-      "targetFreeMiB": [<integer>, ...]
-    },
-    "overrides": {
-      "deviceFreeMiB": [<integer>, ...],
-      "deviceTotalMiB": [<integer>, ...],
-      "hostFreeMiB": <integer>
-    },
-    "showLogs": <boolean>,
     "recommended": {
       "n_ctx": <integer>,
       "n_gpu_layers": <integer>

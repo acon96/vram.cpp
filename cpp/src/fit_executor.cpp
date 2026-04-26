@@ -414,16 +414,12 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     result.status = static_cast<int>(status);
     result.n_ctx = cparams.n_ctx;
     result.n_gpu_layers = mparams.n_gpu_layers;
-    result.fit_target_mib = margins_mib;
-    result.memory_override_enabled = !request.simulated_devices.empty();
-    result.device_free_mib = simulated_device_free_mib;
-    result.device_total_mib = simulated_device_total_mib;
-    result.host_override_enabled = request.has_override_host_free_mib || request.has_override_host_total_mib;
-    result.host_free_mib = result.host_override_enabled
+    const bool host_override_enabled = request.has_override_host_free_mib || request.has_override_host_total_mib;
+    const uint64_t host_free_mib = host_override_enabled
         ? (request.has_override_host_free_mib ? request.override_host_free_mib : request.override_host_total_mib)
         : 0;
-    result.host_total_mib = result.host_override_enabled
-        ? std::max(request.override_host_total_mib, result.host_free_mib)
+    const uint64_t host_total_mib = host_override_enabled
+        ? std::max(request.override_host_total_mib, host_free_mib)
         : 0;
     result.totals = {};
     result.devices.clear();
@@ -439,9 +435,9 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
                 request.model_path,
                 mparams,
                 cparams,
-                result.host_override_enabled,
-                result.host_free_mib,
-                result.host_total_mib,
+            host_override_enabled,
+            host_free_mib,
+            host_total_mib,
                 result,
                 error)) {
             return false;

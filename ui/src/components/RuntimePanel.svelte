@@ -113,7 +113,7 @@
                 oninput={onCtxTextChange}
             />
             <div class="field-row">
-                <span class="hint">Min Ctx?</span>
+                <span class="hint" title="When enabled, the n_ctx value is treated as a minimum — llama.cpp may use a larger context size if memory allows">Min Ctx?</span>
                 <input
                     class="ctx-checkbox"
                     type="checkbox"

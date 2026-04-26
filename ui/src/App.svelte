@@ -184,7 +184,9 @@
             nGpuLayers: params.nGpuLayers,
             splitMode: params.splitMode,
             cacheTypeK: params.cacheTypeK, cacheTypeV: params.cacheTypeV,
-            minCtx: 512,
+            // When nCtxAuto is enabled, the user's nCtx value becomes a minimum —
+            // llama.cpp may use a larger context if memory allows.
+            minCtx: params.nCtxAuto ? params.nCtx : 0,
             // Enable fit logs for worker-side progress parsing; worker fallback disables if unsupported.
             showFitLogs: true,
         };
@@ -227,9 +229,9 @@
     }
 
     // ── HF validate (metadata-only pass) ────────────────────────────────────
-    async function validateHfSelection(selection) {
+    async function validateHfSelection(selection, onStatusUpdate) {
         const client = await initPredictorWorker({ wasmJsUrl, debugEnabled: wasmDebugEnabled });
-        const response = await runHfMetadataFromBrowser(client, selection, { logger });
+        const response = await runHfMetadataFromBrowser(client, selection, { logger, onStatusUpdate });
         if (response?.ok === true && response?.prefixBytes instanceof Uint8Array) {
             hfPreparedFit = response;
             if (Number.isFinite(Number(response.contextLength)) && Number(response.contextLength) > 0) {

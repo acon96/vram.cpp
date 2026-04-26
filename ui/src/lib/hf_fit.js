@@ -156,7 +156,7 @@ function buildTrackedFetch(requests, attempts, token, includeAuth) {
     };
 }
 
-async function parseRemoteGguf(selection, requestUrl, logger) {
+async function parseRemoteGguf(selection, requestUrl, logger, onStatusUpdate) {
     const requests = [];
     const attempts = [];
     const token = (selection?.token || '').trim();
@@ -168,6 +168,7 @@ async function parseRemoteGguf(selection, requestUrl, logger) {
         includeAuth,
     });
 
+    onStatusUpdate?.('Fetching GGUF metadata…');
     const parsed = await gguf(requestUrl, {
         typedMetadata: true,
         fetch: trackedFetch,
@@ -178,6 +179,8 @@ async function parseRemoteGguf(selection, requestUrl, logger) {
         throw new Error('gguf_tensor_data_offset_invalid');
     }
 
+    const tensorCount = parsed?.tensorInfos?.length ?? 0;
+    onStatusUpdate?.(`Downloading header prefix (${(bytesConsumed / 1024).toFixed(0)} KiB, ${tensorCount} tensors)…`);
     const prefixFetchResult = await fetchHfPrefixBytes(
         requestUrl,
         0,
@@ -186,6 +189,7 @@ async function parseRemoteGguf(selection, requestUrl, logger) {
         includeAuth,
     );
 
+    onStatusUpdate?.('Validating model structure…');
     requests.push({
         url: requestUrl,
         start: 0,
@@ -278,7 +282,7 @@ export function buildPreparedHfFitResult(
  * @param {{ log: Function, error: Function }} [logger]
  * @returns {Promise<object>} preparedFit with shardHeaders populated
  */
-async function fetchShardHeadersIfNeeded(preparedFit, selection, logger) {
+async function fetchShardHeadersIfNeeded(preparedFit, selection, logger, onStatusUpdate) {
     const { splitCount, splitNo } = preparedFit;
 
     if (splitCount <= 1 || splitNo !== 0) return preparedFit;
@@ -312,6 +316,7 @@ async function fetchShardHeadersIfNeeded(preparedFit, selection, logger) {
 
     const shardFetches = [];
     for (let n = 2; n <= splitCount; n++) {
+        onStatusUpdate?.(`Fetching shard ${n} of ${splitCount} headers…`);
         const shardName = baseFileName.replace(
             /(-)(\d{5})(-of-\d{5}\.gguf)$/i,
             `$1${String(n).padStart(5, '0')}$3`,
@@ -404,7 +409,7 @@ export async function runFitFromPreparedPrefix(client, preparedFit, predictInput
  * @param {object} opts
  * @param {{ log: Function, error: Function }} [opts.logger]
  */
-export async function runHfMetadataFromBrowser(client, selection, { logger }) {
+export async function runHfMetadataFromBrowser(client, selection, { logger, onStatusUpdate }) {
     void client;
 
     const resolvedUrl  = (selection?.resolvedUrl || '').trim();
@@ -438,7 +443,7 @@ export async function runHfMetadataFromBrowser(client, selection, { logger }) {
                 prefixFetchResult,
                 prefixBytes,
                 metadataResponse,
-            } = await parseRemoteGguf(selection, requestUrl, logger);
+            } = await parseRemoteGguf(selection, requestUrl, logger, onStatusUpdate);
             const effectiveUrl = prefixFetchResult.finalUrl || requestUrl;
             const prepared = buildPreparedHfFitResult(
                 selection,
@@ -450,7 +455,10 @@ export async function runHfMetadataFromBrowser(client, selection, { logger }) {
                 metadataResponse,
                 parsed?.metadata,
             );
-            return fetchShardHeadersIfNeeded(prepared, selection, logger);
+            if (prepared.splitCount > 1) {
+                onStatusUpdate?.(`Fetching ${prepared.splitCount - 1} shard header(s)…`);
+            }
+            return fetchShardHeadersIfNeeded(prepared, selection, logger, onStatusUpdate);
         } catch (error) {
             lastFailure = {
                 ok: false,

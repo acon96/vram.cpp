@@ -209,15 +209,38 @@ function postFitProgress(jobId, patch) {
     });
 }
 
-function parseFitProgressLine(jobId, rawLine) {
+function parseFitProgressLine(jobId, rawLine, isStdout) {
     const line = String(rawLine || '').trim();
     if (!line) return;
 
-    const patch = /** @type {any} */ ({ lastLine: line });
+    const patch = /** @type {any} */ ({});
+    if (isStdout) {
+        patch.lastLine = line;
+    }
 
     if (line.includes('memory for test allocation by device')) {
         const prevAttempt = progressStateByJob.get(jobId)?.attempt || 0;
         patch.attempt = prevAttempt + 1;
+    }
+
+    if (line.includes('getting device memory data for initial parameters')) {
+        patch.lastLine = 'Analyzing initial layout…';
+    }
+
+    if (line.includes('cannot meet free memory target')) {
+        patch.lastLine = 'Adjusting layer distribution…';
+    }
+
+    if (line.includes('filling dense layers') || line.includes('filling dense-only layers')) {
+        patch.lastLine = 'Filling layer layout…';
+    }
+
+    if (line.includes('converting dense-only layers')) {
+        patch.lastLine = 'Finalizing layer layout…';
+    }
+
+    if (line.includes('trying to fit one extra layer')) {
+        patch.lastLine = 'Trying to fit one extra layer…';
     }
 
     const ctxMatch = /context size reduced from\s+\d+\s+to\s+(\d+)/i.exec(line);
@@ -242,18 +265,19 @@ function parseFitProgressLine(jobId, rawLine) {
     postFitProgress(jobId, patch);
 }
 
-function onModuleLogChunk(jobId, chunk) {
+function onModuleLogChunk(jobId, chunk, isStdout) {
     if (jobId == null) {
         return;
     }
 
     const chunkText = String(chunk ?? '');
-    const prev = lineBuffers.get(jobId) || '';
+    const bufferKey = `${jobId}:${isStdout ? 'out' : 'err'}`;
+    const prev = lineBuffers.get(bufferKey) || '';
 
     // Emscripten print callbacks may deliver one complete log line without a trailing newline.
     // Parse these immediately so UI progress/log output updates live.
     if (prev.length === 0 && chunkText.length > 0 && !/[\r\n]/.test(chunkText)) {
-        parseFitProgressLine(jobId, chunkText);
+        parseFitProgressLine(jobId, chunkText, isStdout);
         return;
     }
 
@@ -262,10 +286,10 @@ function onModuleLogChunk(jobId, chunk) {
     const tail = lines.pop() || '';
 
     for (const line of lines) {
-        parseFitProgressLine(jobId, line);
+        parseFitProgressLine(jobId, line, isStdout);
     }
 
-    lineBuffers.set(jobId, tail);
+    lineBuffers.set(bufferKey, tail);
 }
 
 function flushModuleLogBuffer(jobId) {
@@ -273,11 +297,14 @@ function flushModuleLogBuffer(jobId) {
         return;
     }
 
-    const tail = lineBuffers.get(jobId);
-    if (tail && tail.trim().length > 0) {
-        parseFitProgressLine(jobId, tail);
+    for (const isStdout of [true, false]) {
+        const bufferKey = `${jobId}:${isStdout ? 'out' : 'err'}`;
+        const tail = lineBuffers.get(bufferKey);
+        if (tail && tail.trim().length > 0) {
+            parseFitProgressLine(jobId, tail, isStdout);
+        }
+        lineBuffers.delete(bufferKey);
     }
-    lineBuffers.delete(jobId);
 }
 
 function callPredict(module, request) {
@@ -322,8 +349,8 @@ async function ensureModule(config) {
 
         const module = await self.createVRAMPredictorModule({
             locateFile: (path) => new URL(path, normalizedConfig.wasmJsUrl).toString(),
-            print: (text) => onModuleLogChunk(activeJobId, text),
-            printErr: (text) => onModuleLogChunk(activeJobId, text),
+            print: (text) => onModuleLogChunk(activeJobId, text, true),
+            printErr: (text) => onModuleLogChunk(activeJobId, text, false),
         });
 
         if (module == null || module.FS == null || typeof module.ccall !== 'function') {
@@ -397,7 +424,8 @@ async function handlePredict(message) {
         const request = buildPredictRequest(message.options, virtualPath);
         activeJobId = message.jobId;
         progressStateByJob.delete(message.jobId);
-        lineBuffers.delete(message.jobId);
+        lineBuffers.delete(`${message.jobId}:out`);
+        lineBuffers.delete(`${message.jobId}:err`);
 
         postFitProgress(message.jobId, {
             attempt: 0,
