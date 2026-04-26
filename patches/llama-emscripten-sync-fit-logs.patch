@@ -1,5 +1,5 @@
 diff --git a/common/fit.cpp b/common/fit.cpp
-index 4b9528890..076db2b86 100644
+index 4b9528890..dc7fd74d0 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
 @@ -8,10 +8,39 @@
@@ -11,7 +11,7 @@ index 4b9528890..076db2b86 100644
  #include <set>
  #include <string>
  #include <vector>
-    
+ 
 +#if defined(__EMSCRIPTEN__) && defined(VRAM_EMSCRIPTEN_SYNC_FIT_LOGS)
 +static void vram_sync_fit_log(enum ggml_log_level level, const char * fmt, ...) {
 +    if (level == GGML_LOG_LEVEL_DEBUG) {
