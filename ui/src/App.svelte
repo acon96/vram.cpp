@@ -16,6 +16,7 @@
     const wasmJsUrl          = new URL('vram_predictor.js', wasmBaseUrl).toString();
     const wasmDebugEnabled   = import.meta.env.VITE_DEBUG_WASM === '1' || import.meta.env.DEV;
     const wasmFitLogsEnabled = import.meta.env.VITE_DEBUG_WASM_FIT_LOGS === '1';
+    const llamaVersion       = import.meta.env.VITE_LLAMA_VERSION ?? 'dev';
     const appView            = new URLSearchParams(window.location.search).get('view') ?? 'app';
     const isJsonHarnessView  = appView === 'harness';
 
@@ -466,6 +467,7 @@
 
     <footer class="app-footer">
         <span>Powered by <a href="https://github.com/ggml-org/llama.cpp" target="_blank" rel="noreferrer">llama.cpp</a> compiled to WebAssembly.</span>
+        <span class="footer-version">version {llamaVersion}</span>
     </footer>
 </div>
 
@@ -757,9 +759,18 @@
     .app-footer {
         border-top: 1px solid var(--border);
         padding: 12px 24px;
-        text-align: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
         font-size: 0.78rem;
         color: var(--text-muted);
+    }
+
+    .footer-version {
+        font-family: var(--mono);
+        color: var(--text-secondary);
     }
 
     .app-footer a { color: var(--accent); text-decoration: none; }

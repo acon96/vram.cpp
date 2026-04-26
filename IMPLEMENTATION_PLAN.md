@@ -223,7 +223,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 3. [x] Implement GGUF metadata parse prototype and iterative HF prefix range planning helper.
 4. [x] Add first golden fixture tests for GGUF metadata parsing on 3 vendored GGUF files.
 5. [x] Connect local GGUF prefix parser flow to `vram_predictor_predict_json` with progressive prefix attempts.
-6. [ ] Add native `llama-fit-params` parity golden tests for 2-3 full model GGUF fixtures. Use ggml-org/gemma-3-270m-GGUF because it has a Q8_0 quant that is only ~200mb
+6. [x] Add native `llama-fit-params` parity golden tests for 2-3 full model GGUF fixtures. Use ggml-org/gemma-3-270m-GGUF because it has a Q8_0 quant that is only ~200mb
   - [x] Added custom in-process harness (`vram_predictor`) that links llama/common code directly.
   - [x] Added optional parity test comparing harness + llama-fit-params outputs when fixture/binaries are provided via env vars.
   - [x] Executed first real fixture parity run on `gemma-3-270m-Q8_0.gguf`.
@@ -290,10 +290,10 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] remove the "parroting" back of values in `fit_execution_result` `fit_execution_request` and just generally make that API interface simpler, there's a ton of unnecessary info being passed around there
   - [x] don't surface the true debug logs in the web viewer. they come across on stderr instead of stdout. there's a ton of noise from each model load and fit attempt that isn't really useful for the user to see
   - [x] make sure you catch the attempts and iterations of the fit loop that happen at the beginning when trying a few different layouts and prior to iterating over the n_gpu_layers and n_ctx sizes. the text you need to look for might be slightly different for those first few loops
-19. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
-  - [ ] Create an initial "unified" build process that builds the wasm module and packages the bundle with the UI for static hosting; likely some sort of vite build plugin
-  - [ ] create a GitHub actions pipeline that runs the build process whenever there is a push to the main branch; should publish the built app to a GitHub Pages site using the pre-built action
-  - [ ] Add a nightly workflow that checks for new commits to the llama.cpp repo, and if it detects any, updates the submodule commit reference and pushes a commit to the main branch to trigger a rebuild and redeploy of the app with the latest llama.cpp changes.
+19. [x] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
+  - [x] Create an initial unified build process that builds the wasm module and packages the bundle with the UI for static hosting.
+  - [x] Added a GitHub actions pipeline that runs this build process on pushes to `main` and publishes with `actions/deploy-pages`.
+  - [x] Added a nightly workflow that checks for new commits in llama.cpp, updates the submodule reference, and pushes a commit to `main` to trigger rebuild/redeploy.
 
 ### Fixes needed:
 - [x] de-duplicate the "Target Free MiB", "Fit target (MiB)" and the "Free VRAM" parameters in the gpu device section. 
@@ -318,7 +318,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - [x] reduce the number of "build targets" for the cpp part of the project. 
   - there shouldn't be the ability to build **without** llama.cpp vendored in. unit testing against the core logic without llama.cpp doesn't help a ton since the main point of the project is to run the actual llama-fit code in wasm or native.
   - removed the old optional-vendor CMake path and the related `VRAM_ENABLE_VENDOR_LLAMA` / `VRAM_HAS_LLAMA_FIT_EXECUTION` compatibility branches.
-- [ ] Work through the entire codebase and find any unnecessary complications in the arguments, responses, and API surfaces. 
+- [x] Work through the entire codebase and find any unnecessary complications in the arguments, responses, and API surfaces. 
   - The goal would be to remove extra logic and handling for scenarios that don't exist in the codebase.
   - Basically a YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.
   - If there are any response fields that are calculated but not actually returned or used by the UI, those should be removed as well.
@@ -372,3 +372,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-25: Completed remaining item 18 polish: filtered noisy stderr logs from UI log view (only stdout shown); added early fit-phase progress patterns (initial layout, layer fill, MoE, extra-layer); wired min ctx checkbox to backend min_ctx with tooltip; added live step-by-step status during HF tensor fetch; removed parroted-back targets/overrides fields from fit response and fit_execution_result struct.
 - 2026-04-26: Reduced wasm llama.cpp surface by forcing a minimal Emscripten option set in root CMake (disabled OpenSSL/web UI/tooling extras, OpenMP/llamafile/repack paths, and explicitly pinned non-CPU ggml backends off).
 - 2026-04-26: Unified native harness entrypoint by wiring `vram_predictor` to `cpp/src/predictor_main.cpp`, removing the separate harness-only CLI source, and enabling direct JSON request input (argv/stdin) for local fit testing.
+- 2026-04-26: Added GitHub Pages automation: unified wasm+UI static build script (`scripts/build_pages.sh`), push-to-main Pages deploy workflow using `actions/deploy-pages`, and nightly llama.cpp submodule sync workflow that auto-commits upstream updates.

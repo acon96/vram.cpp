@@ -1,0 +1,52 @@
+name: Nightly llama.cpp sync
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-llama-submodule:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update llama.cpp submodule to latest remote commit
+        run: |
+          git submodule update --init --recursive
+          git submodule update --remote --recursive vendor/llama-cpp
+
+      - name: Update README llama.cpp version line
+        run: |
+          llama_tag="$(git -C vendor/llama-cpp describe --tags --match 'b[0-9]*' --abbrev=0 2>/dev/null || echo unknown)"
+          perl -0pi -e "s/llama\.cpp base version: .*/llama.cpp base version: ${llama_tag}/" README.md
+
+      - name: Detect changes
+        id: detect
+        run: |
+          if git diff --quiet -- vendor/llama-cpp README.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push submodule update
+        if: steps.detect.outputs.changed == 'true'
+        run: |
+          git add vendor/llama-cpp README.md
+          new_sha="$(git -C vendor/llama-cpp rev-parse --short HEAD)"
+          git commit -m "chore: sync llama.cpp submodule (${new_sha})"
+          git push origin HEAD:main
