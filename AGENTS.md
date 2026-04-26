@@ -10,7 +10,7 @@ Build a browser-first VRAM predictor that reuses llama.cpp fit behavior through 
 Use links instead of duplicating details:
 - Project overview and baseline commands: [README.md](README.md)
 - Roadmap and progress tracking: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
-- Emscripten setup and troubleshooting: [docs/EMSCRIPTEN_SETUP.md](docs/EMSCRIPTEN_SETUP.md)
+- setup and troubleshooting: [docs/DEVELOPING.md](docs/DEVELOPING.md)
 - API contracts (request + response shapes): [docs/API.md](docs/API.md)
 
 ## Repository Map

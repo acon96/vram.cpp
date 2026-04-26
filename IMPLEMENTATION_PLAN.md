@@ -323,6 +323,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - Basically a reverse YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.
   - If there are any response fields that are calculated but not actually returned or used by the UI, those should be removed as well.
   - The idea is to have a clean and minimal codebase that only includes what is actually needed for the app to function, without extra noise or complexity from unused features or hypothetical scenarios.
+- [ ] replace the readme with a simple, concise description of the project and links to the github pages url.
 
 ## 10. Change Log
 
