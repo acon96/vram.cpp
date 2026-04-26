@@ -2,6 +2,40 @@
  * Hugging Face URL, range-plan, and byte-fetch utilities.
  */
 
+const HF_ALLOWED_HOST_SUFFIXES = [
+    'huggingface.co',
+    'hf.co',
+];
+
+function isAllowedHfHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    if (!host) {
+        return false;
+    }
+
+    return HF_ALLOWED_HOST_SUFFIXES.some((suffix) => {
+        return host === suffix || host.endsWith(`.${suffix}`);
+    });
+}
+
+export function isAllowedHfUrl(urlLike) {
+    try {
+        const parsed = new URL(String(urlLike || ''));
+        if (parsed.protocol !== 'https:') {
+            return false;
+        }
+        return isAllowedHfHost(parsed.hostname);
+    } catch {
+        return false;
+    }
+}
+
+export function assertAllowedHfUrl(urlLike) {
+    if (!isAllowedHfUrl(urlLike)) {
+        throw new Error('hf_url_not_allowed');
+    }
+}
+
 export function encodeRepoPath(repo) {
     return String(repo || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
 }
@@ -25,10 +59,10 @@ export function buildHfCandidateUrls(selection) {
     const canonicalUrl = buildCanonicalHfFileUrl(selection || {});
     const candidates = [];
 
-    if (resolvedUrl) {
+    if (resolvedUrl && isAllowedHfUrl(resolvedUrl)) {
         candidates.push(resolvedUrl);
     }
-    if (canonicalUrl && canonicalUrl !== resolvedUrl) {
+    if (canonicalUrl && canonicalUrl !== resolvedUrl && isAllowedHfUrl(canonicalUrl)) {
         candidates.push(canonicalUrl);
     }
 
@@ -106,6 +140,8 @@ export function buildShardUrl(primaryUrl, targetShardNo, totalShards) {
  * Returns { bytes, httpStatus, redirected, finalUrl, contentRange, contentLength, acceptRanges }.
  */
 export async function fetchHfPrefixBytes(url, start, end, token, includeAuthHeader) {
+    assertAllowedHfUrl(url);
+
     const headers = {
         Accept: 'application/octet-stream',
         Range: `bytes=${start}-${end}`,

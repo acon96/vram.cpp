@@ -147,13 +147,18 @@ function createWorkerClient(config, debugEnabled) {
  * @param {{ wasmJsUrl: string, mountRoot?: string, debugEnabled?: boolean }} options
  */
 export async function initPredictorWorker({ wasmJsUrl, mountRoot = '/models', debugEnabled = false }) {
+    const absoluteWasmUrl = toAbsoluteUrl(wasmJsUrl);
+    if (import.meta.env.PROD && new URL(absoluteWasmUrl).origin !== window.location.origin) {
+        throw new Error('Invalid VITE_WASM_BASE_URL: production deployments must load WASM assets from the same origin.');
+    }
+
     if (workerClientPromise) {
         return workerClientPromise;
     }
 
     workerClientPromise = Promise.resolve(
         createWorkerClient({
-            wasmJsUrl: toAbsoluteUrl(wasmJsUrl),
+            wasmJsUrl: absoluteWasmUrl,
             mountRoot,
         }, debugEnabled)
     );

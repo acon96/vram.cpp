@@ -13,6 +13,10 @@
     // ── WASM config ───────────────────────────────────────────────────────────
     const configuredWasmBase = import.meta.env.VITE_WASM_BASE_URL ?? './wasm/';
     const wasmBaseUrl        = new URL(configuredWasmBase, window.location.href);
+    const isProdBuild        = import.meta.env.PROD === true;
+    const wasmConfigError    = isProdBuild && wasmBaseUrl.origin !== window.location.origin
+        ? 'Invalid VITE_WASM_BASE_URL: production deployments must load WASM assets from the same origin.'
+        : '';
     const wasmJsUrl          = new URL('vram_predictor.js', wasmBaseUrl).toString();
     const wasmDebugEnabled   = import.meta.env.VITE_DEBUG_WASM === '1' || import.meta.env.DEV;
     const wasmFitLogsEnabled = import.meta.env.VITE_DEBUG_WASM_FIT_LOGS === '1';
@@ -231,6 +235,10 @@
 
     // ── HF validate (metadata-only pass) ────────────────────────────────────
     async function validateHfSelection(selection, onStatusUpdate) {
+        if (wasmConfigError) {
+            throw new Error(wasmConfigError);
+        }
+
         const client = await initPredictorWorker({ wasmJsUrl, debugEnabled: wasmDebugEnabled });
         const response = await runHfMetadataFromBrowser(client, selection, { logger, onStatusUpdate });
         if (response?.ok === true && response?.prefixBytes instanceof Uint8Array) {
@@ -272,6 +280,12 @@
     }
 
     async function runPrediction() {
+        if (wasmConfigError) {
+            status = 'error';
+            errorMsg = wasmConfigError;
+            return;
+        }
+
         if (modelSource === 'local') {
             if (!selectedFile) { errorMsg = 'Please select a GGUF file first.'; status = 'error'; return; }
         } else if (!hfSelection.validated) {

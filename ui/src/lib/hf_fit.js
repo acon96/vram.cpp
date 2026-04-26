@@ -7,6 +7,7 @@
 
 import { gguf } from '@huggingface/gguf';
 import {
+    assertAllowedHfUrl,
     buildHfCandidateUrls,
     buildCanonicalHfFileUrl,
     buildHfSelectionCacheKey,
@@ -20,6 +21,9 @@ import {
 // typically well under 50 KiB; 128 KiB is a generous safety margin.
 const SHARD_HEADER_BYTES = 1024 * 1024;
 const TENSOR_PREVIEW_COUNT = 32;
+const MAX_GGUF_PREFIX_BYTES = 64 * 1024 * 1024;
+const MAX_GGUF_TENSOR_COUNT = 200000;
+const MAX_GGUF_SHARD_COUNT = 256;
 
 function toSafeInteger(value, fallback = 0) {
     if (typeof value === 'bigint') {
@@ -118,6 +122,8 @@ function parseRangeHeader(rangeValue) {
 function buildTrackedFetch(requests, attempts, token, includeAuth) {
     return async (input, init = {}) => {
         const requestUrl = typeof input === 'string' ? input : input?.url;
+        assertAllowedHfUrl(requestUrl);
+
         const headers = new Headers(init?.headers ?? (typeof input === 'object' ? input?.headers : undefined) ?? undefined);
 
         if (includeAuth && token) {
@@ -180,7 +186,15 @@ async function parseRemoteGguf(selection, requestUrl, logger, onStatusUpdate) {
         throw new Error('gguf_tensor_data_offset_invalid');
     }
 
+    if (bytesConsumed > MAX_GGUF_PREFIX_BYTES) {
+        throw new Error('gguf_prefix_bytes_exceeds_limit');
+    }
+
     const tensorCount = parsed?.tensorInfos?.length ?? 0;
+    if (tensorCount > MAX_GGUF_TENSOR_COUNT) {
+        throw new Error('gguf_tensor_count_exceeds_limit');
+    }
+
     onStatusUpdate?.(`Downloading header prefix (${(bytesConsumed / 1024).toFixed(0)} KiB, ${tensorCount} tensors)…`);
     const prefixFetchResult = await fetchHfPrefixBytes(
         requestUrl,
@@ -328,6 +342,10 @@ async function fetchShardHeadersIfNeeded(preparedFit, selection, logger, onStatu
 
     if (splitCount <= 1 || splitNo !== 0) return preparedFit;
 
+    if (splitCount > MAX_GGUF_SHARD_COUNT) {
+        throw new Error('gguf_shard_count_exceeds_limit');
+    }
+
     // Detect the shard pattern from the original selection filename, NOT from
     // the resolvedUrl. Pre-signed / XetHub URLs encode the filename inside query
     // params so buildShardUrl can't rewrite them; canonical HF URLs are reliable.
@@ -346,6 +364,10 @@ async function fetchShardHeadersIfNeeded(preparedFit, selection, logger, onStatu
     // duplicates the full KV section, so the primary's byte count is a safe
     // lower bound for each stub.
     const stubFetchBytes = preparedFit.prefixBytes.byteLength;
+    if (stubFetchBytes > MAX_GGUF_PREFIX_BYTES) {
+        throw new Error('gguf_shard_prefix_bytes_exceeds_limit');
+    }
+
     const token = (selection?.token || '').trim();
 
     logger?.log('hf.shardHeaders.start', {

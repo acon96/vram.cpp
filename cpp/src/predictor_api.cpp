@@ -7,12 +7,38 @@
 #include <algorithm>
 #include <exception>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
 namespace {
 
 using nlohmann::json;
+
+constexpr size_t k_max_gpu_devices = 8;
+constexpr size_t k_max_array_entries = 8;
+constexpr uint64_t k_max_host_ram_bytes = 16ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr uint64_t k_max_context_tokens = 1024ULL * 1024ULL;
+constexpr uint64_t k_max_batch_tokens = 1024ULL * 1024ULL;
+constexpr uint64_t k_max_min_ctx_tokens = 1024ULL * 1024ULL;
+constexpr int64_t k_max_n_gpu_layers = 1024 * 1024;
+
+bool json_is_non_negative_integer(const json & value) {
+    if (value.is_number_unsigned()) {
+        return true;
+    }
+    if (value.is_number_integer()) {
+        return value.get<int64_t>() >= 0;
+    }
+    return false;
+}
+
+uint64_t json_get_non_negative_u64(const json & value) {
+    if (value.is_number_unsigned()) {
+        return value.get<uint64_t>();
+    }
+    return static_cast<uint64_t>(value.get<int64_t>());
+}
 
 
 uint64_t json_u64_or_default(const json & obj, const char * key, uint64_t fallback) {
@@ -21,11 +47,11 @@ uint64_t json_u64_or_default(const json & obj, const char * key, uint64_t fallba
     }
 
     const json & value = obj[key];
-    if (!value.is_number_unsigned() && !value.is_number_integer()) {
+    if (!json_is_non_negative_integer(value)) {
         return fallback;
     }
 
-    const uint64_t parsed = value.get<uint64_t>();
+    const uint64_t parsed = json_get_non_negative_u64(value);
     return parsed;
 }
 
@@ -81,10 +107,10 @@ std::vector<uint64_t> json_u64_array_or_default(const json & obj, const char * k
     std::vector<uint64_t> out;
     out.reserve(value.size());
     for (const auto & item : value) {
-        if (!item.is_number_unsigned() && !item.is_number_integer()) {
+        if (!json_is_non_negative_integer(item)) {
             return fallback;
         }
-        out.push_back(item.get<uint64_t>());
+        out.push_back(json_get_non_negative_u64(item));
     }
 
     if (out.empty()) {
@@ -175,6 +201,15 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         const std::vector<uint64_t> fit_target_mib = json_u64_array_or_default(device, "fit_target_mib", std::vector<uint64_t>{1024});
         const std::vector<uint64_t> target_free_mib = json_u64_array_or_default(device, "target_free_mib", std::vector<uint64_t>{});
 
+        if (fit_target_mib.size() > k_max_array_entries || target_free_mib.size() > k_max_array_entries) {
+            json error = {
+                {"ok", false},
+                {"error", "device.fit_arrays_too_large"}
+            };
+            response = error.dump();
+            return response.c_str();
+        }
+
         std::vector<uint64_t> override_device_free_mib;
         std::vector<uint64_t> override_device_total_mib;
         std::vector<vram::sim_device_spec> simulated_devices;
@@ -188,8 +223,17 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 return response.c_str();
             }
 
+            if (device["gpus"].size() > k_max_gpu_devices) {
+                json error = {
+                    {"ok", false},
+                    {"error", "device.gpus_too_many"}
+                };
+                response = error.dump();
+                return response.c_str();
+            }
+
             for (const auto & gpu : device["gpus"]) {
-                if (!gpu.is_object() || !gpu.contains("free_bytes") || !gpu["free_bytes"].is_number_integer()) {
+                if (!gpu.is_object() || !gpu.contains("free_bytes") || !json_is_non_negative_integer(gpu["free_bytes"])) {
                     json error = {
                         {"ok", false},
                         {"error", "device.gpus[].free_bytes_required_for_fit_override"}
@@ -198,7 +242,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                     return response.c_str();
                 }
 
-                const uint64_t free_bytes = gpu["free_bytes"].get<uint64_t>();
+                const uint64_t free_bytes = json_get_non_negative_u64(gpu["free_bytes"]);
                 override_device_free_mib.push_back(free_bytes / (1024 * 1024));
 
                 vram::sim_backend_profile backend_profile = vram::sim_backend_profile::cuda;
@@ -237,8 +281,8 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
                 uint64_t total_bytes = free_bytes;
 
-                if (gpu.contains("total_bytes") && gpu["total_bytes"].is_number_integer()) {
-                    total_bytes = gpu["total_bytes"].get<uint64_t>();
+                if (gpu.contains("total_bytes") && json_is_non_negative_integer(gpu["total_bytes"])) {
+                    total_bytes = json_get_non_negative_u64(gpu["total_bytes"]);
                     override_device_total_mib.push_back(total_bytes / (1024 * 1024));
                 }
 
@@ -261,7 +305,17 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             }
         }
 
-        const uint64_t override_host_free_mib = json_u64_or_default(device, "host_ram_bytes", 0) / (1024 * 1024);
+        const uint64_t raw_host_ram_bytes = json_u64_or_default(device, "host_ram_bytes", 0);
+        if (raw_host_ram_bytes > k_max_host_ram_bytes) {
+            json error = {
+                {"ok", false},
+                {"error", "device.host_ram_bytes_out_of_range"}
+            };
+            response = error.dump();
+            return response.c_str();
+        }
+
+        const uint64_t override_host_free_mib = raw_host_ram_bytes / (1024 * 1024);
 
         const uint64_t fit_ctx_min = json_u64_or_default(runtime, "min_ctx", 0);
 
@@ -271,9 +325,27 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
         const uint64_t n_ubatch = json_u64_or_default(runtime, "n_ubatch", 0);
 
+        if (fit_ctx_min > k_max_min_ctx_tokens || n_ctx > k_max_context_tokens || n_batch > k_max_batch_tokens || n_ubatch > k_max_batch_tokens) {
+            json error = {
+                {"ok", false},
+                {"error", "runtime_values_out_of_range"}
+            };
+            response = error.dump();
+            return response.c_str();
+        }
+
         int32_t n_gpu_layers = -1;
         if (runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()) {
-            n_gpu_layers = static_cast<int32_t>(runtime["n_gpu_layers"].get<int64_t>());
+            const int64_t parsed_n_gpu_layers = runtime["n_gpu_layers"].get<int64_t>();
+            if (parsed_n_gpu_layers < -1 || parsed_n_gpu_layers > k_max_n_gpu_layers) {
+                json error = {
+                    {"ok", false},
+                    {"error", "runtime.n_gpu_layers_out_of_range"}
+                };
+                response = error.dump();
+                return response.c_str();
+            }
+            n_gpu_layers = static_cast<int32_t>(parsed_n_gpu_layers);
         }
 
         vram::fit_execution_request::split_mode_type split_mode = vram::fit_execution_request::split_mode_type::layer;
@@ -306,6 +378,16 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         }
 
         vram::fit_execution_request exec_request;
+        const uint64_t effective_n_ctx = n_ctx > 0 ? n_ctx : 4096;
+        if (fit_ctx_min > effective_n_ctx || effective_n_ctx > std::numeric_limits<uint32_t>::max() || n_batch > std::numeric_limits<uint32_t>::max() || n_ubatch > std::numeric_limits<uint32_t>::max()) {
+            json error = {
+                {"ok", false},
+                {"error", "runtime_value_conversion_out_of_range"}
+            };
+            response = error.dump();
+            return response.c_str();
+        }
+
         exec_request.model_path = model;
         exec_request.fit_target_mib = fit_target_mib;
         exec_request.target_free_mib = target_free_mib;
@@ -314,7 +396,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
         exec_request.override_host_free_mib = override_host_free_mib;
         exec_request.show_fit_logs = show_fit_logs;
         exec_request.min_ctx = static_cast<uint32_t>(fit_ctx_min);
-        exec_request.n_ctx = static_cast<uint32_t>(n_ctx > 0 ? n_ctx : 4096);
+        exec_request.n_ctx = static_cast<uint32_t>(effective_n_ctx);
         exec_request.n_batch = static_cast<uint32_t>(n_batch);
         exec_request.n_ubatch = static_cast<uint32_t>(n_ubatch);
         exec_request.n_gpu_layers = n_gpu_layers;
