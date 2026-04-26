@@ -1,8 +1,8 @@
 diff --git a/common/fit.cpp b/common/fit.cpp
+index 4b9528890..076db2b86 100644
 --- a/common/fit.cpp
 +++ b/common/fit.cpp
-@@
- #include <array>
+@@ -8,10 +8,35 @@
  #include <cassert>
  #include <stdexcept>
  #include <cinttypes>
@@ -11,7 +11,7 @@ diff --git a/common/fit.cpp b/common/fit.cpp
  #include <set>
  #include <string>
  #include <vector>
-+
+ 
 +#if defined(__EMSCRIPTEN__) && defined(VRAM_EMSCRIPTEN_SYNC_FIT_LOGS)
 +static void vram_sync_fit_log(enum ggml_log_level level, const char * fmt, ...) {
 +    FILE * stream = stdout;
@@ -34,3 +34,7 @@ diff --git a/common/fit.cpp b/common/fit.cpp
 +        }                                                       \
 +    } while (0)
 +#endif
++
+ // this enum is only used in llama_params_fit_impl but needs to be defined outside of it to fix a Windows compilation issue
+ // enum to identify part of a layer for distributing its tensors:
+ enum common_layer_fraction_t {
