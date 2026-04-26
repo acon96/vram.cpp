@@ -9,6 +9,7 @@
     import { giBToBytes } from './lib/format.js';
     import { buildHfSelectionCacheKey } from './lib/hf_utils.js';
     import { runHfMetadataFromBrowser, runHfFitFromBrowser, runFitFromPreparedPrefix } from './lib/hf_fit.js';
+    import { tick } from 'svelte';
 
     // ── WASM config ───────────────────────────────────────────────────────────
     const configuredWasmBase = import.meta.env.VITE_WASM_BASE_URL ?? './wasm/';
@@ -115,6 +116,7 @@
     let fitProgress = $state({ attempt: 0, nCtx: null, nGpuLayers: null, lastLine: '' });
     let fitLogLines = $state([]);
     let activeWorkerClient = $state(null);
+    let fitLogView = $state(null);
 
     // ── Handlers ──────────────────────────────────────────────────────────────
     function handleModelSourceChange(nextSource) {
@@ -198,7 +200,9 @@
     }
 
     function handleFitProgress(progress) {
-        const nextLine = typeof progress?.lastLine === 'string' ? progress.lastLine.trim() : '';
+        const nextLine = typeof progress?.rawLine === 'string' && progress.rawLine.trim().length > 0
+            ? progress.rawLine.trim()
+            : (typeof progress?.lastLine === 'string' ? progress.lastLine.trim() : '');
         if (nextLine.length > 0) {
             const lastLine = fitLogLines.length > 0 ? fitLogLines[fitLogLines.length - 1] : '';
             if (nextLine !== lastLine) {
@@ -213,6 +217,18 @@
             lastLine: typeof progress?.lastLine === 'string' ? progress.lastLine : fitProgress.lastLine,
         };
     }
+
+    $effect(() => {
+        if (fitLogView == null || fitLogLines.length === 0) {
+            return;
+        }
+
+        tick().then(() => {
+            if (fitLogView != null) {
+                fitLogView.scrollTop = fitLogView.scrollHeight;
+            }
+        });
+    });
 
     function cancelPrediction() {
         if (!isRunning || activeWorkerClient == null) {
@@ -464,7 +480,7 @@
                             <p class="progress-inline">{progressLabel}</p>
                         {/if}
                         {#if fitLogLines.length > 0}
-                            <div class="fit-log-view" role="log" aria-live="polite">
+                            <div class="fit-log-view" role="log" aria-live="polite" bind:this={fitLogView}>
                                 {#each fitLogLines as line}
                                     <div class="fit-log-line">{line}</div>
                                 {/each}
@@ -723,7 +739,8 @@
 
     .fit-log-view {
         width: 100%;
-        max-height: 180px;
+        height: 220px;
+        min-height: 220px;
         overflow: auto;
         border: 1px solid var(--border);
         border-radius: 8px;

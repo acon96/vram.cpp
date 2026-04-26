@@ -14,8 +14,12 @@ index 4b9528890..076db2b86 100644
  
 +#if defined(__EMSCRIPTEN__) && defined(VRAM_EMSCRIPTEN_SYNC_FIT_LOGS)
 +static void vram_sync_fit_log(enum ggml_log_level level, const char * fmt, ...) {
++    if (level == GGML_LOG_LEVEL_DEBUG) {
++        return;
++    }
++
 +    FILE * stream = stdout;
-+    if (level == GGML_LOG_LEVEL_WARN || level == GGML_LOG_LEVEL_ERROR || level == GGML_LOG_LEVEL_DEBUG) {
++    if (level == GGML_LOG_LEVEL_WARN || level == GGML_LOG_LEVEL_ERROR) {
 +        stream = stderr;
 +    }
 +

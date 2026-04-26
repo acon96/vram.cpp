@@ -211,6 +211,8 @@ function postFitProgress(jobId, patch) {
             nCtx: next.nCtx,
             nGpuLayers: next.nGpuLayers,
             lastLine: next.lastLine,
+            rawLine: typeof patch.rawLine === 'string' ? patch.rawLine : '',
+            stream: patch.stream === 'stderr' ? 'stderr' : 'stdout',
         },
     });
 }
@@ -219,10 +221,11 @@ function parseFitProgressLine(jobId, rawLine, isStdout) {
     const line = String(rawLine || '').trim();
     if (!line) return;
 
-    const patch = /** @type {any} */ ({});
-    if (isStdout) {
-        patch.lastLine = line;
-    }
+    const patch = /** @type {any} */ ({
+        rawLine: line,
+        stream: isStdout ? 'stdout' : 'stderr',
+        lastLine: line,
+    });
 
     if (line.includes('memory for test allocation by device')) {
         const prevAttempt = progressStateByJob.get(jobId)?.attempt || 0;
