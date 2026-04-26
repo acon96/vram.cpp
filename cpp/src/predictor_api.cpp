@@ -5,12 +5,9 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cmath>
 #include <exception>
-#include <cstdio>
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -30,19 +27,6 @@ uint64_t json_u64_or_default(const json & obj, const char * key, uint64_t fallba
 
     const uint64_t parsed = value.get<uint64_t>();
     return parsed;
-}
-
-double json_double_or_default(const json & obj, const char * key, double fallback) {
-    if (!obj.is_object() || !obj.contains(key)) {
-        return fallback;
-    }
-
-    const json & value = obj[key];
-    if (!value.is_number()) {
-        return fallback;
-    }
-
-    return value.get<double>();
 }
 
 bool json_bool_or_default(const json & obj, const char * key, bool fallback) {
@@ -107,17 +91,6 @@ std::vector<uint64_t> json_u64_array_or_default(const json & obj, const char * k
         return fallback;
     }
 
-    return out;
-}
-
-std::string join_u64_csv(const std::vector<uint64_t> & values) {
-    std::string out;
-    for (size_t i = 0; i < values.size(); ++i) {
-        if (i > 0) {
-            out.push_back(',');
-        }
-        out += std::to_string(values[i]);
-    }
     return out;
 }
 
@@ -201,8 +174,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
         const std::vector<uint64_t> fit_target_mib = json_u64_array_or_default(device, "fit_target_mib", std::vector<uint64_t>{1024});
         const std::vector<uint64_t> target_free_mib = json_u64_array_or_default(device, "target_free_mib", std::vector<uint64_t>{});
-        const std::string fit_target_csv = join_u64_csv(fit_target_mib);
-        const std::string target_free_csv = join_u64_csv(target_free_mib);
 
         std::vector<uint64_t> override_device_free_mib;
         std::vector<uint64_t> override_device_total_mib;
@@ -288,150 +259,97 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 response = error.dump();
                 return response.c_str();
             }
+        }
 
-            const uint64_t override_host_free_mib = json_u64_or_default(device, "host_ram_bytes", 0) / (1024 * 1024);
+        const uint64_t override_host_free_mib = json_u64_or_default(device, "host_ram_bytes", 0) / (1024 * 1024);
 
-            std::vector<std::string> args;
-            args.push_back("--model");
-            args.push_back(model);
-            args.push_back("--fit-target-mib");
-            args.push_back(fit_target_csv);
+        const uint64_t fit_ctx_min = json_u64_or_default(runtime, "min_ctx", 0);
 
-            if (!target_free_mib.empty()) {
-                args.push_back("--target-free-mib");
-                args.push_back(target_free_csv);
-            }
+        const uint64_t n_ctx = json_u64_or_default(runtime, "n_ctx", 0);
 
-            if (!override_device_free_mib.empty()) {
-                args.push_back("--override-device-free-mib");
-                args.push_back(join_u64_csv(override_device_free_mib));
-            }
+        const uint64_t n_batch = json_u64_or_default(runtime, "n_batch", 0);
 
-            if (!override_device_total_mib.empty()) {
-                args.push_back("--override-device-total-mib");
-                args.push_back(join_u64_csv(override_device_total_mib));
-            }
+        const uint64_t n_ubatch = json_u64_or_default(runtime, "n_ubatch", 0);
 
-            if (override_host_free_mib > 0) {
-                args.push_back("--override-host-free-mib");
-                args.push_back(std::to_string(override_host_free_mib));
-            }
+        int32_t n_gpu_layers = -1;
+        if (runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()) {
+            n_gpu_layers = static_cast<int32_t>(runtime["n_gpu_layers"].get<int64_t>());
+        }
 
-            const uint64_t fit_ctx_min = json_u64_or_default(runtime, "min_ctx", 0);
-            if (fit_ctx_min > 0) {
-                args.push_back("--fit-ctx");
-                args.push_back(std::to_string(fit_ctx_min));
-            }
-
-            const uint64_t n_ctx = json_u64_or_default(runtime, "n_ctx", 0);
-            if (n_ctx > 0) {
-                args.push_back("-c");
-                args.push_back(std::to_string(n_ctx));
-            }
-
-            const uint64_t n_batch = json_u64_or_default(runtime, "n_batch", 0);
-            if (n_batch > 0) {
-                args.push_back("--batch-size");
-                args.push_back(std::to_string(n_batch));
-            }
-
-            const uint64_t n_ubatch = json_u64_or_default(runtime, "n_ubatch", 0);
-            if (n_ubatch > 0) {
-                args.push_back("--ubatch-size");
-                args.push_back(std::to_string(n_ubatch));
-            }
-
-            if (runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()) {
-                args.push_back("--n-gpu-layers");
-                args.push_back(std::to_string(runtime["n_gpu_layers"].get<int64_t>()));
-            }
-
-            vram::fit_execution_request::split_mode_type split_mode = vram::fit_execution_request::split_mode_type::layer;
-            if (runtime.contains("split_mode")) {
-                if (!runtime["split_mode"].is_string()) {
-                    json error = {
-                        {"ok", false},
-                        {"error", "runtime.split_mode_must_be_string_when_present"}
-                    };
-                    response = error.dump();
-                    return response.c_str();
-                }
-
-                const std::string split_mode_name = runtime["split_mode"].get<std::string>();
-                if (split_mode_name == "layer") {
-                    split_mode = vram::fit_execution_request::split_mode_type::layer;
-                } else if (split_mode_name == "row") {
-                    split_mode = vram::fit_execution_request::split_mode_type::row;
-                } else if (split_mode_name == "tensor") {
-                    split_mode = vram::fit_execution_request::split_mode_type::tensor;
-                } else {
-                    json error = {
-                        {"ok", false},
-                        {"error", "runtime.split_mode_invalid"},
-                        {"value", split_mode_name}
-                    };
-                    response = error.dump();
-                    return response.c_str();
-                }
-
-                args.push_back("--split-mode");
-                args.push_back(split_mode_name);
-            }
-
-            if (show_fit_logs) {
-                args.push_back("--show-fit-logs");
-            }
-
-            vram::fit_execution_request exec_request;
-            exec_request.model_path = model;
-            exec_request.fit_target_mib = fit_target_mib;
-            exec_request.target_free_mib = target_free_mib;
-            exec_request.simulated_devices = simulated_devices;
-            exec_request.has_override_host_free_mib = override_host_free_mib > 0;
-            exec_request.has_override_host_total_mib = override_host_free_mib > 0;
-            exec_request.override_host_free_mib = override_host_free_mib;
-            exec_request.override_host_total_mib = override_host_free_mib;
-            exec_request.show_fit_logs = show_fit_logs;
-            exec_request.min_ctx = static_cast<uint32_t>(fit_ctx_min);
-            exec_request.n_ctx = static_cast<uint32_t>(n_ctx > 0 ? n_ctx : 4096);
-            exec_request.n_batch = static_cast<uint32_t>(n_batch);
-            exec_request.n_ubatch = static_cast<uint32_t>(n_ubatch);
-            exec_request.n_gpu_layers = runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()
-                ? static_cast<int32_t>(runtime["n_gpu_layers"].get<int64_t>())
-                : -1;
-            exec_request.split_mode = split_mode;
-
-            vram::fit_execution_result exec_result;
-            std::string exec_error;
-            if (!vram::execute_fit_request(exec_request, exec_result, exec_error)) {
+        vram::fit_execution_request::split_mode_type split_mode = vram::fit_execution_request::split_mode_type::layer;
+        if (runtime.contains("split_mode")) {
+            if (!runtime["split_mode"].is_string()) {
                 json error = {
                     {"ok", false},
-                    {"error", exec_error.empty() ? "fit_execution_failed" : exec_error}
+                    {"error", "runtime.split_mode_must_be_string_when_present"}
                 };
                 response = error.dump();
                 return response.c_str();
             }
 
-            json body = {
-                {"ok", exec_result.ok},
-                {"fit",
-                    {
-                        {"recommended",
-                            {
-                                {"n_ctx", exec_result.n_ctx},
-                                {"n_gpu_layers", exec_result.n_gpu_layers}
-                            }
-                        },
-                        {"status", exec_result.status},
-                        {"warnings", exec_result.warnings},
-                        {"memoryBytes", fit_memory_bytes_to_json(exec_result)},
-                        {"breakdown", fit_memory_breakdown_to_json(exec_result)}
-                    }
-                }
+            const std::string split_mode_name = runtime["split_mode"].get<std::string>();
+            if (split_mode_name == "layer") {
+                split_mode = vram::fit_execution_request::split_mode_type::layer;
+            } else if (split_mode_name == "row") {
+                split_mode = vram::fit_execution_request::split_mode_type::row;
+            } else if (split_mode_name == "tensor") {
+                split_mode = vram::fit_execution_request::split_mode_type::tensor;
+            } else {
+                json error = {
+                    {"ok", false},
+                    {"error", "runtime.split_mode_invalid"},
+                    {"value", split_mode_name}
+                };
+                response = error.dump();
+                return response.c_str();
+            }
+        }
+
+        vram::fit_execution_request exec_request;
+        exec_request.model_path = model;
+        exec_request.fit_target_mib = fit_target_mib;
+        exec_request.target_free_mib = target_free_mib;
+        exec_request.simulated_devices = simulated_devices;
+        exec_request.has_override_host_free_mib = override_host_free_mib > 0;
+        exec_request.override_host_free_mib = override_host_free_mib;
+        exec_request.show_fit_logs = show_fit_logs;
+        exec_request.min_ctx = static_cast<uint32_t>(fit_ctx_min);
+        exec_request.n_ctx = static_cast<uint32_t>(n_ctx > 0 ? n_ctx : 4096);
+        exec_request.n_batch = static_cast<uint32_t>(n_batch);
+        exec_request.n_ubatch = static_cast<uint32_t>(n_ubatch);
+        exec_request.n_gpu_layers = n_gpu_layers;
+        exec_request.split_mode = split_mode;
+
+        vram::fit_execution_result exec_result;
+        std::string exec_error;
+        if (!vram::execute_fit_request(exec_request, exec_result, exec_error)) {
+            json error = {
+                {"ok", false},
+                {"error", exec_error.empty() ? "fit_execution_failed" : exec_error}
             };
-            response = body.dump();
+            response = error.dump();
             return response.c_str();
         }
+
+        json body = {
+            {"ok", exec_result.ok},
+            {"fit",
+                {
+                    {"recommended",
+                        {
+                            {"n_ctx", exec_result.n_ctx},
+                            {"n_gpu_layers", exec_result.n_gpu_layers}
+                        }
+                    },
+                    {"status", exec_result.status},
+                    {"warnings", exec_result.warnings},
+                    {"memoryBytes", fit_memory_bytes_to_json(exec_result)},
+                    {"breakdown", fit_memory_breakdown_to_json(exec_result)}
+                }
+            }
+        };
+        response = body.dump();
+        return response.c_str();
 
     } catch (const std::exception & error) {
         response = json({

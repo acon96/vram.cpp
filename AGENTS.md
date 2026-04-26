@@ -29,7 +29,7 @@ Use links instead of duplicating details:
 - In-process fit executor: `cpp/src/fit_executor.cpp`, `cpp/include/vram/fit_executor.h`
 - Simulated ggml backend: `cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`
 - WASM entrypoint: `cpp/src/predictor_main.cpp`
-- Native fit harness tool: `cpp/tools/vram_fit_harness.cpp`
+- Native fit harness executable (`vram_predictor`) now uses: `cpp/src/predictor_main.cpp`
 - Public headers live under `cpp/include/vram/`
 - Unit/integration coverage lives under `cpp/tests/`
 
@@ -58,7 +58,7 @@ Use links instead of duplicating details:
 - JSON request entrypoint: `cpp/src/predictor_api.cpp`
 - Shared fit execution path: `cpp/src/fit_executor.cpp`
 - Simulated device injection for deterministic fits: `cpp/src/sim_backend.cpp`
-- Standalone native harness uses the same shared executor path as the API/browser fit path: `cpp/tools/vram_fit_harness.cpp`
+- Standalone native harness executable uses the same shared JSON entrypoint and fit path as the API/browser flow: `cpp/src/predictor_main.cpp` + `cpp/src/fit_executor.cpp`
 - Browser UI fit requests run through the dedicated worker, not directly on the main thread: `ui/src/lib/predictor_fit_worker.js` + `ui/src/lib/predictor_worker_client.js`
 - Browser raw-request debugging path is exposed at `/?view=harness` via `ui/src/components/JsonHarness.svelte`
 
@@ -75,8 +75,9 @@ ctest --test-dir build --output-on-failure
 Deployable WASM build:
 ```bash
 source ~/emsdk/emsdk_env.sh && emcmake cmake -S . -B build-wasm -DVRAM_BUILD_TESTS=OFF
-cmake --build build-wasm --target vram_predictor_wasm -j4
+cmake --build build-wasm --target vram_predictor -j4
 ```
+> Note: This build takes 60+ seconds to link the final WASM binary, so only run this when you need to validate browser behavior or update the WASM build after C++ changes. For faster iterative development, use the native build and tests, which share all core logic and are much quicker to build and run.
 
 UI development server:
 ```bash
@@ -98,7 +99,7 @@ npm run build
   - `VRAM_LLAMA_FIT_MODELS` (comma/semicolon list)
   - `VRAM_LLAMA_FIT_MODEL` (single fallback)
   - `VRAM_LLAMA_FIT_BINARY`
-  - `VRAM_FIT_HARNESS_BINARY`
+  - `VRAM_PREDICTOR_BINARY`
 - `.fixtures/` is gitignored; do not assume fixtures exist in fresh clones.
     - If you need to use a real GGUF file, search in this folder; the developer has likely downloaded fixtures here for testing. Just make sure you search the folder directly before trying to download large files again.
 

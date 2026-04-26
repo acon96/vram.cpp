@@ -19,6 +19,22 @@ export function buildCanonicalHfFileUrl(selection) {
     return `https://huggingface.co/${encodedRepo}/resolve/${encodedRevision}/${encodedFile}`;
 }
 
+/** Build ordered candidate URLs, preferring explicit resolvedUrl then canonical URL. */
+export function buildHfCandidateUrls(selection) {
+    const resolvedUrl = String(selection?.resolvedUrl || '').trim();
+    const canonicalUrl = buildCanonicalHfFileUrl(selection || {});
+    const candidates = [];
+
+    if (resolvedUrl) {
+        candidates.push(resolvedUrl);
+    }
+    if (canonicalUrl && canonicalUrl !== resolvedUrl) {
+        candidates.push(canonicalUrl);
+    }
+
+    return candidates;
+}
+
 /** Stable cache key for a selection object. */
 export function buildHfSelectionCacheKey(selection) {
     const repo     = String(selection?.repo     || '').trim();

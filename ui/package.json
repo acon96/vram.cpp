@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "assets:serve": "node ./scripts/serve-wasm-assets.mjs",
-    "dev": "vite",
+    "dev": "concurrently --kill-others \"npm run assets:serve\" \"npm run web\"",
+    "web": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "concurrently": "^9.2.1",
     "svelte": "^5.55.4",
     "vite": "^8.0.10"
   },

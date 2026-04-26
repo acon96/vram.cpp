@@ -649,7 +649,6 @@
     }
 
     .repo-select > label,
-    .options-grid label,
     .file-picker {
         display: flex;
         flex-direction: column;
@@ -844,10 +843,6 @@
     }
 
     @media (max-width: 760px) {
-        .options-grid {
-            grid-template-columns: 1fr;
-        }
-
         .metadata-grid {
             grid-template-columns: 1fr;
         }

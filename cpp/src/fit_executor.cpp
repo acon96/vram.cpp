@@ -76,7 +76,6 @@ bool collect_memory_breakdown(
         const llama_context_params & context_params,
         bool host_override_enabled,
         uint64_t host_override_free_mib,
-        uint64_t host_override_total_mib,
         fit_execution_result & result,
         std::string & error) {
     llama_model_params mparams_copy = model_params;
@@ -146,10 +145,8 @@ bool collect_memory_breakdown(
 
     // Get host memory
     if (host_override_enabled) {
-        const uint64_t h_free  = host_override_free_mib  > 0 ? host_override_free_mib  : host_override_total_mib;
-        const uint64_t h_total = host_override_total_mib > 0 ? host_override_total_mib : h_free;
-        host_row.free  = h_free  * MiB;
-        host_row.total = std::max(h_free, h_total) * MiB;
+        host_row.free  = host_override_free_mib * MiB;
+        host_row.total = host_override_free_mib * MiB;
     } else {
         ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
         if (cpu != nullptr) {
@@ -360,7 +357,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
         llama_log_set(emscripten_passthrough_log_callback, nullptr);
         llama_logger_overridden = true;
         std::fprintf(stderr,
-            "[vram-fit] request model=%s n_ctx=%u n_batch=%u n_ubatch=%u min_ctx=%u n_gpu_layers=%d split_mode=%d fit_target_mib=%s target_free_mib=%s override_device_free_mib=%s override_device_total_mib=%s override_host_free_mib=%llu override_host_total_mib=%llu\n",
+            "[vram-fit] request model=%s n_ctx=%u n_batch=%u n_ubatch=%u min_ctx=%u n_gpu_layers=%d split_mode=%d fit_target_mib=%s target_free_mib=%s override_device_free_mib=%s override_device_total_mib=%s override_host_free_mib=%llu\n",
             request.model_path.c_str(),
             request.n_ctx,
             request.n_batch,
@@ -372,8 +369,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
             join_u64_csv(request.target_free_mib).c_str(),
             join_u64_csv(simulated_device_free_mib).c_str(),
             join_u64_csv(simulated_device_total_mib).c_str(),
-            static_cast<unsigned long long>(request.override_host_free_mib),
-            static_cast<unsigned long long>(request.override_host_total_mib));
+            static_cast<unsigned long long>(request.override_host_free_mib));
         std::fflush(stderr);
 #endif
     } else {
@@ -414,13 +410,8 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     result.status = static_cast<int>(status);
     result.n_ctx = cparams.n_ctx;
     result.n_gpu_layers = mparams.n_gpu_layers;
-    const bool host_override_enabled = request.has_override_host_free_mib || request.has_override_host_total_mib;
-    const uint64_t host_free_mib = host_override_enabled
-        ? (request.has_override_host_free_mib ? request.override_host_free_mib : request.override_host_total_mib)
-        : 0;
-    const uint64_t host_total_mib = host_override_enabled
-        ? std::max(request.override_host_total_mib, host_free_mib)
-        : 0;
+    const bool host_override_enabled = request.has_override_host_free_mib;
+    const uint64_t host_free_mib = host_override_enabled ? request.override_host_free_mib : 0;
     result.totals = {};
     result.devices.clear();
     result.host = {};
@@ -435,9 +426,8 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
                 request.model_path,
                 mparams,
                 cparams,
-            host_override_enabled,
-            host_free_mib,
-            host_total_mib,
+                host_override_enabled,
+                host_free_mib,
                 result,
                 error)) {
             return false;

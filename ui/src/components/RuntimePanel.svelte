@@ -246,12 +246,6 @@
         flex: 1;
     }
 
-    .input-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
     .ctx-row {
         display: flex;
         align-items: center;

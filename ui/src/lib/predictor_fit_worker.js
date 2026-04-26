@@ -8,6 +8,16 @@ let activeJobId = null;
 const lineBuffers = new Map();
 const progressStateByJob = new Map();
 
+function getBufferKey(jobId, isStdout) {
+    return `${jobId}:${isStdout ? 'out' : 'err'}`;
+}
+
+function resetJobTracking(jobId) {
+    progressStateByJob.delete(jobId);
+    lineBuffers.delete(getBufferKey(jobId, true));
+    lineBuffers.delete(getBufferKey(jobId, false));
+}
+
 function debugLog(event, payload) {
     if (!debugEnabled) {
         return;
@@ -138,8 +148,6 @@ function buildPredictRequest(options, modelPath) {
         nGpuLayers = -1,
         splitMode = 'layer',
         minCtx = 0,
-        cacheTypeK = 'f16',
-        cacheTypeV = 'f16',
         showFitLogs = false,
     } = options;
 
@@ -150,8 +158,6 @@ function buildPredictRequest(options, modelPath) {
         n_ubatch: nUbatch,
         n_gpu_layers: nGpuLayers,
         split_mode: splitMode,
-        cache_type_k: cacheTypeK,
-        cache_type_v: cacheTypeV,
     };
 
     return {
@@ -271,7 +277,7 @@ function onModuleLogChunk(jobId, chunk, isStdout) {
     }
 
     const chunkText = String(chunk ?? '');
-    const bufferKey = `${jobId}:${isStdout ? 'out' : 'err'}`;
+    const bufferKey = getBufferKey(jobId, isStdout);
     const prev = lineBuffers.get(bufferKey) || '';
 
     // Emscripten print callbacks may deliver one complete log line without a trailing newline.
@@ -298,7 +304,7 @@ function flushModuleLogBuffer(jobId) {
     }
 
     for (const isStdout of [true, false]) {
-        const bufferKey = `${jobId}:${isStdout ? 'out' : 'err'}`;
+        const bufferKey = getBufferKey(jobId, isStdout);
         const tail = lineBuffers.get(bufferKey);
         if (tail && tail.trim().length > 0) {
             parseFitProgressLine(jobId, tail, isStdout);
@@ -317,10 +323,6 @@ function callPredict(module, request) {
     );
 
     return JSON.parse(raw);
-}
-
-function cloneRequest(request) {
-    return JSON.parse(JSON.stringify(request));
 }
 
 async function ensureModule(config) {
@@ -423,9 +425,7 @@ async function handlePredict(message) {
     try {
         const request = buildPredictRequest(message.options, virtualPath);
         activeJobId = message.jobId;
-        progressStateByJob.delete(message.jobId);
-        lineBuffers.delete(`${message.jobId}:out`);
-        lineBuffers.delete(`${message.jobId}:err`);
+        resetJobTracking(message.jobId);
 
         postFitProgress(message.jobId, {
             attempt: 0,
@@ -445,7 +445,7 @@ async function handlePredict(message) {
         return response;
     } finally {
         flushModuleLogBuffer(message.jobId);
-        progressStateByJob.delete(message.jobId);
+        resetJobTracking(message.jobId);
         if (activeJobId === message.jobId) {
             activeJobId = null;
         }
@@ -465,7 +465,9 @@ async function handlePredictJson(message) {
     const mountRoot = moduleConfig?.mountRoot || '/models';
     ensureDirectory(module.FS, mountRoot);
 
-    const request = cloneRequest(message.request || {});
+    const request = typeof structuredClone === 'function'
+        ? structuredClone(message.request || {})
+        : JSON.parse(JSON.stringify(message.request || {}));
     let virtualPath = null;
 
     if (message.fileBuffer != null) {

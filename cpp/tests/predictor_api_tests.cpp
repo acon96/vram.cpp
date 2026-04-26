@@ -217,7 +217,7 @@ void test_fit_mode_command_planning() {
                         "{\"id\":\"gpu1\",\"free_bytes\":6442450944,\"total_bytes\":8589934592}"
                     "]"
                 "},"
-                "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\",\"min_ctx\":1024,\"show_fit_logs\":true}"
+                "\"fit\":{\"predictor_binary\":\"vram_predictor\",\"min_ctx\":1024,\"show_fit_logs\":true}"
         "}";
 
     const char * response = vram_predictor_predict_json(request.c_str());
@@ -225,7 +225,7 @@ void test_fit_mode_command_planning() {
 
     assert(contains(body, "\"ok\":true"));
     assert(contains(body, "\"executedInProcess\":false"));
-    assert(contains(body, "\"command\":{\"binary\":\"vram_fit_harness\""));
+    assert(contains(body, "\"command\":{\"binary\":\"vram_predictor\""));
     assert(contains(body, "\"args\""));
     assert(contains(body, "--fit-target-mib"));
     assert(contains(body, "--target-free-mib"));
@@ -258,7 +258,7 @@ void test_fit_mode_heterogeneous_gpu_planning() {
                 "{\"id\":\"gpu2\",\"free_bytes\":21474836480,\"total_bytes\":25769803776}"
             "]"
         "},"
-        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\",\"min_ctx\":1024}"
+        "\"fit\":{\"predictor_binary\":\"vram_predictor\",\"min_ctx\":1024}"
         "}";
 
     const char * response = vram_predictor_predict_json(request.c_str());
@@ -280,7 +280,7 @@ void test_fit_mode_backend_profile_parsing() {
                 "{\"id\":\"gpu0\",\"backend\":\"metal\",\"free_bytes\":8589934592,\"total_bytes\":12884901888}"
             "]"
         "},"
-        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\"}"
+        "\"fit\":{\"predictor_binary\":\"vram_predictor\"}"
         "}";
 
     const char * response = vram_predictor_predict_json(request.c_str());
@@ -303,7 +303,7 @@ void test_fit_mode_invalid_backend_profile() {
                 "{\"id\":\"gpu0\",\"backend\":\"not-a-backend\",\"free_bytes\":8589934592,\"total_bytes\":12884901888}"
             "]"
         "},"
-        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\"}"
+        "\"fit\":{\"predictor_binary\":\"vram_predictor\"}"
         "}";
 
     const char * response = vram_predictor_predict_json(request.c_str());
@@ -326,7 +326,7 @@ void test_fit_mode_split_mode_parsing() {
                 "{\"id\":\"gpu0\",\"backend\":\"metal\",\"free_bytes\":8589934592,\"total_bytes\":12884901888}"
             "]"
         "},"
-        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\"}"
+        "\"fit\":{\"predictor_binary\":\"vram_predictor\"}"
         "}";
 
     const char * response = vram_predictor_predict_json(request.c_str());
@@ -350,7 +350,7 @@ void test_fit_mode_invalid_split_mode() {
                 "{\"id\":\"gpu0\",\"free_bytes\":8589934592,\"total_bytes\":12884901888}"
             "]"
         "},"
-        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\"}"
+        "\"fit\":{\"predictor_binary\":\"vram_predictor\"}"
         "}";
 
     const char * response = vram_predictor_predict_json(request.c_str());

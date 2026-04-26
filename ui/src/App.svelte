@@ -13,7 +13,7 @@
     // ── WASM config ───────────────────────────────────────────────────────────
     const configuredWasmBase = import.meta.env.VITE_WASM_BASE_URL ?? './wasm/';
     const wasmBaseUrl        = new URL(configuredWasmBase, window.location.href);
-    const wasmJsUrl          = new URL('vram_predictor_wasm.js', wasmBaseUrl).toString();
+    const wasmJsUrl          = new URL('vram_predictor.js', wasmBaseUrl).toString();
     const wasmDebugEnabled   = import.meta.env.VITE_DEBUG_WASM === '1' || import.meta.env.DEV;
     const wasmFitLogsEnabled = import.meta.env.VITE_DEBUG_WASM_FIT_LOGS === '1';
     const appView            = new URLSearchParams(window.location.search).get('view') ?? 'app';

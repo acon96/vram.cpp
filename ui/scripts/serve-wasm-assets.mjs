@@ -19,8 +19,8 @@ if (!Number.isFinite(port) || port <= 0 || port > 65535) {
 }
 
 const routeToFile = {
-    [`${mountPath}/vram_predictor_wasm.js`]: path.join(wasmBuildDir, 'vram_predictor_wasm.js'),
-    [`${mountPath}/vram_predictor_wasm.wasm`]: path.join(wasmBuildDir, 'vram_predictor_wasm.wasm'),
+    [`${mountPath}/vram_predictor.js`]: path.join(wasmBuildDir, 'vram_predictor.js'),
+    [`${mountPath}/vram_predictor.wasm`]: path.join(wasmBuildDir, 'vram_predictor.wasm'),
 };
 
 function normalizeMountPath(inputPath) {

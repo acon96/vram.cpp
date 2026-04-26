@@ -224,7 +224,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 4. [x] Add first golden fixture tests for GGUF metadata parsing on 3 vendored GGUF files.
 5. [x] Connect local GGUF prefix parser flow to `vram_predictor_predict_json` with progressive prefix attempts.
 6. [ ] Add native `llama-fit-params` parity golden tests for 2-3 full model GGUF fixtures. Use ggml-org/gemma-3-270m-GGUF because it has a Q8_0 quant that is only ~200mb
-  - [x] Added custom in-process harness (`vram_fit_harness`) that links llama/common code directly.
+  - [x] Added custom in-process harness (`vram_predictor`) that links llama/common code directly.
   - [x] Added optional parity test comparing harness + llama-fit-params outputs when fixture/binaries are provided via env vars.
   - [x] Executed first real fixture parity run on `gemma-3-270m-Q8_0.gguf`.
   - [x] Added reusable llama/common patch for overriding detected device/host free memory during fit.
@@ -276,7 +276,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Stabilized wasm in-process fit breakdown collection by using no-allocation model/context setup and falling back to non-fatal summary rows when detailed breakdown collection fails.
   - [x] Refined simulated device memory accounting so `ggml_backend_dev_memory` reports post-allocation free bytes (reducing negative/unbounded unaccounted memory artifacts in debug tables).
   - [x] Corrected `target_free_mib` to fit-margin conversion so large simulated free-memory values do not inflate margin requirements and force unexpected host placement.
-  - [x] Removed the vendor `common_fit_params_with_memory_override(...)` surface and rewired `vram_fit_harness` onto the shared `execute_fit_request(...)` path.
+  - [x] Removed the vendor `common_fit_params_with_memory_override(...)` surface and rewired `vram_predictor` onto the shared `execute_fit_request(...)` path.
 18. [x] Implement remaining features, knobs, and UI polish, such as:
   - [x] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel (cuda, metal, vulkan, etc.)
   - [x] Add hard coded profiles for common GPUs with total memory and backend profile presets
@@ -308,7 +308,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - [x] Auto assign the device index based on the order they are in the UI. the user doesn't need to select them directly
 - [x] Metadata preview should be collapsed and not cause the UI to jump when it loads/appears. basically put the drawer behind a button that is enabled once the metadata is verified
 - [x] Move the 'Runtime' parameters section to be on the same row as the 'Model' section and expand the remaining parameters to fill that row and make it into the 'Hardware Config' section.
-- [ ] Disable as much of the remaining llama.cpp build as possible to reduce the wasm binary size
+- [x] Disable as much of the remaining llama.cpp build as possible to reduce the wasm binary size
 
 ### Cleanup:
 - [x] Remove the `web/` folder and move the wasm helper and worker files into `ui/lib/` since they are only used by the UI and not shared with any other potential consumers of the wasm module. the smoke test can be deleted
@@ -320,10 +320,11 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - removed the old optional-vendor CMake path and the related `VRAM_ENABLE_VENDOR_LLAMA` / `VRAM_HAS_LLAMA_FIT_EXECUTION` compatibility branches.
 - [ ] Work through the entire codebase and find any unnecessary complications in the arguments, responses, and API surfaces. 
   - The goal would be to remove extra logic and handling for scenarios that don't exist in the codebase.
-  - Basically a reverse YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.
+  - Basically a YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.
   - If there are any response fields that are calculated but not actually returned or used by the UI, those should be removed as well.
   - The idea is to have a clean and minimal codebase that only includes what is actually needed for the app to function, without extra noise or complexity from unused features or hypothetical scenarios.
-- [ ] replace the readme with a simple, concise description of the project and links to the github pages url.
+  - DRY is also important, so any duplicate logic (like the two separate HF range planning implementations) should be consolidated into a single implementation. The one exception to this is if code needs to be duplicated across the wasm -> js boundary
+- [x] replace the readme with a simple, concise description of the project and links to the github pages url.
 
 ## 10. Change Log
 
@@ -336,9 +337,9 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-23: Added golden regression tests using 3 vendored GGUF fixtures and split native fit parity testing into an explicit follow-up step requiring full model fixtures.
 - 2026-04-23: Integrated local GGUF prefix parsing into predictor API requests and added API-level integration tests.
 - 2026-04-23: Added HF file URL resolver and progressive range request planner with helper tests, plus API support for Hugging Face request planning output.
-- 2026-04-23: Validated first Emscripten build (`vram_predictor_wasm.js/.wasm`) and added a dedicated setup guide for emsdk activation and wasm build commands.
+- 2026-04-23: Validated first Emscripten build (`vram_predictor.js/.wasm`) and added a dedicated setup guide for emsdk activation and wasm build commands.
 - 2026-04-23: Implemented platform-aware HF range execution backend (Emscripten fetch in browser/WASM, curl fallback in native) and fed fetched prefixes directly into the GGUF parser.
-- 2026-04-23: Replaced executable-driven fit orchestration in predictor API with harness planning semantics and added a native in-process fit harness (`vram_fit_harness`) linked to llama/common code.
+- 2026-04-23: Replaced executable-driven fit orchestration in predictor API with harness planning semantics and added a native in-process fit harness (`vram_predictor`) linked to llama/common code.
 - 2026-04-23: Built and ran first native parity comparison using `gemma-3-270m-Q8_0.gguf` against `llama-fit-params`.
 - 2026-04-23: Added a maintainable vendor patch to llama/common fit APIs so predictor requests and the native harness can override detected host/device memory for deterministic hardware targeting.
 - 2026-04-23: Fixed browser in-process wasm fit execution path by suppressing threaded common-fit logger usage under Emscripten and verified successful browser-side fit execution against the local Gemma fixture.
@@ -369,3 +370,5 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-25: Completed item 18 fit UX/runtime slice: added split-mode runtime controls (`layer`/`row`/`tensor`) wired through predictor API + fit executor, added worker-side fit progress parsing (attempt/n_ctx/n_gpu_layers) from info-level fit logs, and added cancellable runs via worker cancellation + UI cancel button.
 - 2026-04-25: Completed item 18 fit UX/runtime slice: added split-mode runtime controls (`layer`/`row`/`tensor`) wired through predictor API + fit executor, added worker-side fit progress parsing (attempt/n_ctx/n_gpu_layers) from info-level fit logs, and added cancellable runs via worker cancellation + UI cancel button.
 - 2026-04-25: Completed remaining item 18 polish: filtered noisy stderr logs from UI log view (only stdout shown); added early fit-phase progress patterns (initial layout, layer fill, MoE, extra-layer); wired min ctx checkbox to backend min_ctx with tooltip; added live step-by-step status during HF tensor fetch; removed parroted-back targets/overrides fields from fit response and fit_execution_result struct.
+- 2026-04-26: Reduced wasm llama.cpp surface by forcing a minimal Emscripten option set in root CMake (disabled OpenSSL/web UI/tooling extras, OpenMP/llamafile/repack paths, and explicitly pinned non-CPU ggml backends off).
+- 2026-04-26: Unified native harness entrypoint by wiring `vram_predictor` to `cpp/src/predictor_main.cpp`, removing the separate harness-only CLI source, and enabling direct JSON request input (argv/stdin) for local fit testing.

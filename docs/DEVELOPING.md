@@ -5,7 +5,7 @@
 ```bash
 cmake -S . -B build
 cmake --build build
-./build/vram_predictor_dev
+./build/vram_predictor
 ctest --test-dir build --output-on-failure
 ```
 
@@ -19,13 +19,13 @@ source ~/emsdk/emsdk_env.sh
 
 ```bash
 emcmake cmake -S . -B build-wasm -DVRAM_BUILD_TESTS=OFF
-cmake --build build-wasm --target vram_predictor_wasm -j4
+cmake --build build-wasm --target vram_predictor -j4
 ```
 
 Expected artifacts:
 
-- `vram_predictor_wasm.js`
-- `vram_predictor_wasm.wasm`
+- `vram_predictor.js`
+- `vram_predictor.wasm`
 
 ## Emscripten Setup (macOS)
 
@@ -64,8 +64,8 @@ cmake --build build-wasm
 
 Expected artifacts:
 
-- `build-wasm/vram_predictor_wasm.js`
-- `build-wasm/vram_predictor_wasm.wasm`
+- `build-wasm/vram_predictor.js`
+- `build-wasm/vram_predictor.wasm`
 
 ## Troubleshooting
 

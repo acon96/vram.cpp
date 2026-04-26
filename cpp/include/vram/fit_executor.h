@@ -37,9 +37,7 @@ struct fit_execution_request {
     std::vector<uint64_t> target_free_mib;
     std::vector<sim_device_spec> simulated_devices;
     bool has_override_host_free_mib = false;
-    bool has_override_host_total_mib = false;
     uint64_t override_host_free_mib = 0;
-    uint64_t override_host_total_mib = 0;
     bool show_fit_logs = false;
     uint32_t n_ctx = 4096;
     uint32_t n_batch = 0;

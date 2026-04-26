@@ -7,6 +7,7 @@
 
 import { gguf } from '@huggingface/gguf';
 import {
+    buildHfCandidateUrls,
     buildCanonicalHfFileUrl,
     buildHfSelectionCacheKey,
     detectShardPattern,
@@ -234,6 +235,46 @@ async function parseRemoteGguf(selection, requestUrl, logger, onStatusUpdate) {
     };
 }
 
+function buildHfMetadataFailure(requestUrl, detail) {
+    return {
+        ok: false,
+        source: 'huggingface',
+        error: 'hf_metadata_parse_failed',
+        detail,
+        ...(requestUrl ? { resolvedUrl: requestUrl } : {}),
+    };
+}
+
+async function prepareHfFitFromUrl(selection, requestUrl, logger, onStatusUpdate) {
+    const {
+        parsed,
+        requests,
+        attempts,
+        prefixFetchResult,
+        prefixBytes,
+        metadataResponse,
+    } = await parseRemoteGguf(selection, requestUrl, logger, onStatusUpdate);
+
+    const effectiveUrl = prefixFetchResult.finalUrl || requestUrl;
+    let preparedFit = buildPreparedHfFitResult(
+        selection,
+        effectiveUrl,
+        requests,
+        attempts,
+        prefixBytes,
+        prefixFetchResult,
+        metadataResponse,
+        parsed?.metadata,
+    );
+
+    if (preparedFit.splitCount > 1) {
+        onStatusUpdate?.(`Fetching ${preparedFit.splitCount - 1} shard header(s)…`);
+    }
+
+    preparedFit = await fetchShardHeadersIfNeeded(preparedFit, selection, logger, onStatusUpdate);
+    return preparedFit;
+}
+
 /**
  * Assemble the cached prefetch result object from a successful metadata parse
  * attempt.  This is stored in App state and reused for the actual fit call.
@@ -412,16 +453,10 @@ export async function runFitFromPreparedPrefix(client, preparedFit, predictInput
 export async function runHfMetadataFromBrowser(client, selection, { logger, onStatusUpdate }) {
     void client;
 
-    const resolvedUrl  = (selection?.resolvedUrl || '').trim();
-    const canonicalUrl = buildCanonicalHfFileUrl(selection || {});
-
-    if (!resolvedUrl && !canonicalUrl) {
+    const candidateUrls = buildHfCandidateUrls(selection);
+    if (candidateUrls.length === 0) {
         return { ok: false, source: 'huggingface', error: 'invalid_huggingface_model_descriptor' };
     }
-
-    const candidateUrls = [];
-    if (resolvedUrl) candidateUrls.push(resolvedUrl);
-    if (canonicalUrl && canonicalUrl !== resolvedUrl) candidateUrls.push(canonicalUrl);
 
     logger?.log('hf.browserMetadata.start', {
         repo: selection?.repo || '',
@@ -429,44 +464,14 @@ export async function runHfMetadataFromBrowser(client, selection, { logger, onSt
         candidateUrls,
     });
 
-    let lastFailure = {
-        ok: false, source: 'huggingface', error: 'hf_metadata_parse_failed', detail: 'no_candidate_urls',
-    };
+    let lastFailure = buildHfMetadataFailure('', 'no_candidate_urls');
 
     for (let ci = 0; ci < candidateUrls.length; ci++) {
         const requestUrl = candidateUrls[ci];
         try {
-            const {
-                parsed,
-                requests,
-                attempts,
-                prefixFetchResult,
-                prefixBytes,
-                metadataResponse,
-            } = await parseRemoteGguf(selection, requestUrl, logger, onStatusUpdate);
-            const effectiveUrl = prefixFetchResult.finalUrl || requestUrl;
-            const prepared = buildPreparedHfFitResult(
-                selection,
-                effectiveUrl,
-                requests,
-                attempts,
-                prefixBytes,
-                prefixFetchResult,
-                metadataResponse,
-                parsed?.metadata,
-            );
-            if (prepared.splitCount > 1) {
-                onStatusUpdate?.(`Fetching ${prepared.splitCount - 1} shard header(s)…`);
-            }
-            return fetchShardHeadersIfNeeded(prepared, selection, logger, onStatusUpdate);
+            return await prepareHfFitFromUrl(selection, requestUrl, logger, onStatusUpdate);
         } catch (error) {
-            lastFailure = {
-                ok: false,
-                source: 'huggingface',
-                error: 'hf_metadata_parse_failed',
-                detail: error?.message ?? String(error),
-                resolvedUrl: requestUrl,
-            };
+            lastFailure = buildHfMetadataFailure(requestUrl, error?.message ?? String(error));
             logger?.error('hf.browserMetadata.parse.error', {
                 requestUrl,
                 error: lastFailure.detail,
@@ -491,16 +496,10 @@ export async function runHfMetadataFromBrowser(client, selection, { logger, onSt
  * @param {(progress: object) => void} [opts.onProgress]
  */
 export async function runHfFitFromBrowser(client, selection, predictInput, { onPreparedFit, logger, onProgress }) {
-    const resolvedUrl  = (selection?.resolvedUrl || '').trim();
-    const canonicalUrl = buildCanonicalHfFileUrl(selection || {});
-
-    if (!resolvedUrl && !canonicalUrl) {
+    const candidateUrls = buildHfCandidateUrls(selection);
+    if (candidateUrls.length === 0) {
         return { ok: false, source: 'huggingface', error: 'invalid_huggingface_model_descriptor' };
     }
-
-    const candidateUrls = [];
-    if (resolvedUrl) candidateUrls.push(resolvedUrl);
-    if (canonicalUrl && canonicalUrl !== resolvedUrl) candidateUrls.push(canonicalUrl);
 
     logger?.log('hf.browserFit.start', {
         repo: selection?.repo || '',
@@ -508,33 +507,12 @@ export async function runHfFitFromBrowser(client, selection, predictInput, { onP
         candidateUrls, predictInput,
     });
 
-    let lastFailure = {
-        ok: false, source: 'huggingface', error: 'hf_metadata_parse_failed', detail: 'no_candidate_urls',
-    };
+    let lastFailure = buildHfMetadataFailure('', 'no_candidate_urls');
 
     for (let ci = 0; ci < candidateUrls.length; ci++) {
         const requestUrl = candidateUrls[ci];
         try {
-            const {
-                parsed,
-                requests,
-                attempts,
-                prefixFetchResult,
-                prefixBytes,
-                metadataResponse,
-            } = await parseRemoteGguf(selection, requestUrl, logger);
-
-            let preparedFit = buildPreparedHfFitResult(
-                selection,
-                prefixFetchResult.finalUrl || requestUrl,
-                requests,
-                attempts,
-                prefixBytes,
-                prefixFetchResult,
-                metadataResponse,
-                parsed?.metadata,
-            );
-            preparedFit = await fetchShardHeadersIfNeeded(preparedFit, selection, logger);
+            const preparedFit = await prepareHfFitFromUrl(selection, requestUrl, logger);
             onPreparedFit?.(preparedFit);
 
             logger?.log('hf.browserFit.fit.start', {
@@ -547,13 +525,7 @@ export async function runHfFitFromBrowser(client, selection, predictInput, { onP
             logger?.log('hf.browserFit.fit.done', { ok: fitResponse?.ok });
             return fitResponse;
         } catch (error) {
-            lastFailure = {
-                ok: false,
-                source: 'huggingface',
-                error: 'hf_metadata_parse_failed',
-                detail: error?.message ?? String(error),
-                resolvedUrl: requestUrl,
-            };
+            lastFailure = buildHfMetadataFailure(requestUrl, error?.message ?? String(error));
             logger?.error('hf.browserFit.parse.error', {
                 requestUrl,
                 error: lastFailure.detail,
