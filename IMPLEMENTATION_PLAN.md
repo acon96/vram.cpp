@@ -279,6 +279,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Removed the vendor `common_fit_params_with_memory_override(...)` surface and rewired `vram_fit_harness` onto the shared `execute_fit_request(...)` path.
   - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel (cuda, metal, vulkan, etc.)
   - [ ] Add hard coded profiles for common GPUs with total memory and backend profile presets
+  - [ ] Add support for split modes (layer, row, tensor) and other llama.cpp knobs that affect memory allocation/usage
 18. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
   - [ ] Create an initial "unified" build process that builds the wasm module and packages the bundle with the UI for static hosting; likely some sort of vite build plugin
   - [ ] create a GitHub actions pipeline that runs the build process whenever there is a push to the main branch; should publish the built app to a GitHub Pages site using the pre-built action
@@ -289,7 +290,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - Removed global fitTargetMiB/targetFreeMiB; replaced with per-GPU `bufferMiB` (keep-free margin) fed to both fit_target_mib and target_free_mib in the fit engine.
 - [x] KV cache quantization types are only FP16, Q8_0 and Q4_0. remove all other options
 - [x] split gguf files: use original HF filename when mounting prefix bytes in WASM FS so llama.cpp sees the correct shard naming convention
-- [ ] There is something wrong with the re-implementation of the tensor attribution code. We should just use the stock code in fit.cpp instead of re-writing it ourself and breaking something in the process
+- [x] There is something wrong with the re-implementation of the tensor attribution code. We should just use the stock code in fit.cpp instead of re-writing it ourself and breaking something in the process
   - `fill_breakdown_fallback` shouldn't exist at all. if it fails, we have a problem
   - replace `collect_memory_breakdown` with `common_get_device_memory_data` from `fit.cpp`; they effectively do the same thing and our version is reporting weird things with multi-gpus
 
@@ -300,7 +301,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - [ ] Figure out how to visually indicate the progress of the fit execution (i.e. number of attempts/iterations?)
   - probably need to detect the number of iterations the fit algorithm has gone through and show "Fitting... (attempt ##)" below the spinner
   - also probably should allow cancelling the fit attempt if it's taking too long or the user wants to adjust parameters and try again. this would involve adding a cancellation mechanism to the API and the wasm worker, and then adding a "Cancel" button in the UI that triggers it.
-- [ ] Add support for split modes (layer, row, tensor) and other llama.cpp knobs that affect memory allocation/usage
+
 - [ ] Disable as much of the remaining llama.cpp build as possible to reduce the wasm binary size
 
 ### Cleanup:

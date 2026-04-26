@@ -281,12 +281,6 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 if (label.empty()) {
                     label = "GPU " + std::to_string(simulated_devices.size());
                 }
-                if (gpu.contains("index") && gpu["index"].is_number_integer()) {
-                    const int64_t gpu_index = gpu["index"].get<int64_t>();
-                    if (gpu_index >= 0) {
-                        label += " [index " + std::to_string(gpu_index) + "]";
-                    }
-                }
 
                 uint64_t total_bytes = free_bytes;
 
@@ -297,7 +291,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
 
                 vram::sim_device_spec sim_device;
                 sim_device.name = label;
-                sim_device.description = std::string("Simulated ") + vram::sim_backend_profile_name(backend_profile) + " device";
+                sim_device.description = vram::sim_backend_profile_name(backend_profile) + std::string(" device");
                 sim_device.free_bytes = free_bytes;
                 sim_device.total_bytes = std::max(total_bytes, free_bytes);
                 sim_device.profile = backend_profile;

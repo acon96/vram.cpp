@@ -28,7 +28,7 @@ Use links instead of duplicating details:
 - API bridge: `cpp/src/predictor_api.cpp`, `cpp/include/vram/predictor_api.h`
 - In-process fit executor: `cpp/src/fit_executor.cpp`, `cpp/include/vram/fit_executor.h`
 - Simulated ggml backend: `cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`
-- WASM entrypoint: `cpp/src/predictor_wasm_main.cpp`
+- WASM entrypoint: `cpp/src/predictor_main.cpp`
 - Native fit harness tool: `cpp/tools/vram_fit_harness.cpp`
 - Public headers live under `cpp/include/vram/`
 - Unit/integration coverage lives under `cpp/tests/`

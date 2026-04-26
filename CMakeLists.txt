@@ -78,7 +78,7 @@ endif()
 
 if(EMSCRIPTEN AND VRAM_BUILD_WASM)
     add_executable(vram_predictor_wasm
-        cpp/src/predictor_wasm_main.cpp
+        cpp/src/predictor_main.cpp
     )
 
     target_link_libraries(vram_predictor_wasm
@@ -100,7 +100,7 @@ if(EMSCRIPTEN AND VRAM_BUILD_WASM)
     )
 else()
     add_executable(vram_predictor_dev
-        cpp/src/predictor_wasm_main.cpp
+        cpp/src/predictor_main.cpp
     )
 
     target_link_libraries(vram_predictor_dev

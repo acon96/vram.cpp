@@ -31,15 +31,15 @@ std::string to_lower_ascii(const std::string & value) {
 const char * sim_backend_profile_name(sim_backend_profile profile) {
     switch (profile) {
         case sim_backend_profile::cuda:
-            return "cuda";
+            return "CUDA";
         case sim_backend_profile::metal:
-            return "metal";
+            return "Metal";
         case sim_backend_profile::vulkan:
-            return "vulkan";
+            return "Vulkan";
         case sim_backend_profile::generic:
-            return "generic";
+            return "Generic";
         default:
-            return "generic";
+            return "Unknown";
     }
 }
 
@@ -579,7 +579,7 @@ sim_backend::sim_backend(std::vector<sim_device_spec> specs)
             device_context->spec.name = "Sim GPU " + std::to_string(i);
         }
         if (device_context->spec.description.empty()) {
-            device_context->spec.description = std::string("Simulated ") + sim_backend_profile_name(device_context->spec.profile) + " backend";
+            device_context->spec.description = sim_backend_profile_name(device_context->spec.profile) + std::string(" backend");
         }
         if (device_context->spec.total_bytes < device_context->spec.free_bytes) {
             device_context->spec.total_bytes = device_context->spec.free_bytes;
