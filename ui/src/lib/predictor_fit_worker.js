@@ -4,6 +4,9 @@ let modulePromise = null;
 let moduleInstance = null;
 let moduleConfig = null;
 let debugEnabled = false;
+let activeJobId = null;
+const lineBuffers = new Map();
+const progressStateByJob = new Map();
 
 function debugLog(event, payload) {
     if (!debugEnabled) {
@@ -133,6 +136,7 @@ function buildPredictRequest(options, modelPath) {
         nBatch,
         nUbatch,
         nGpuLayers = -1,
+        splitMode = 'layer',
         minCtx = 0,
         cacheTypeK = 'f16',
         cacheTypeV = 'f16',
@@ -145,6 +149,7 @@ function buildPredictRequest(options, modelPath) {
         n_batch: nBatch,
         n_ubatch: nUbatch,
         n_gpu_layers: nGpuLayers,
+        split_mode: splitMode,
         cache_type_k: cacheTypeK,
         cache_type_v: cacheTypeV,
     };
@@ -160,6 +165,119 @@ function buildPredictRequest(options, modelPath) {
         },
         show_fit_logs: showFitLogs,
     };
+}
+
+function postFitProgress(jobId, patch) {
+    if (jobId == null || patch == null || typeof patch !== 'object') {
+        return;
+    }
+
+    const prev = progressStateByJob.get(jobId) || {
+        attempt: 0,
+        nCtx: null,
+        nGpuLayers: null,
+        nglByDevice: {},
+        lastLine: '',
+    };
+
+    const next = {
+        ...prev,
+        ...patch,
+        nglByDevice: {
+            ...(prev.nglByDevice || {}),
+            ...(patch.nglByDevice || {}),
+        },
+    };
+
+    const nglValues = Object.values(next.nglByDevice || {})
+        .map((v) => Number(v))
+        .filter((v) => Number.isFinite(v) && v >= 0);
+    if (nglValues.length > 0) {
+        next.nGpuLayers = nglValues.reduce((a, b) => a + b, 0);
+    }
+
+    progressStateByJob.set(jobId, next);
+    self.postMessage({
+        type: 'progress',
+        jobId,
+        progress: {
+            attempt: next.attempt,
+            nCtx: next.nCtx,
+            nGpuLayers: next.nGpuLayers,
+            lastLine: next.lastLine,
+        },
+    });
+}
+
+function parseFitProgressLine(jobId, rawLine) {
+    const line = String(rawLine || '').trim();
+    if (!line) return;
+
+    const patch = /** @type {any} */ ({ lastLine: line });
+
+    if (line.includes('memory for test allocation by device')) {
+        const prevAttempt = progressStateByJob.get(jobId)?.attempt || 0;
+        patch.attempt = prevAttempt + 1;
+    }
+
+    const ctxMatch = /context size reduced from\s+\d+\s+to\s+(\d+)/i.exec(line);
+    if (ctxMatch) {
+        patch.nCtx = Number.parseInt(ctxMatch[1], 10);
+    }
+
+    const nglSetMatch = /set ngl_per_device\[(\d+)\]\.n_layer=(\d+)/i.exec(line);
+    if (nglSetMatch) {
+        const idx = Number.parseInt(nglSetMatch[1], 10);
+        const nLayer = Number.parseInt(nglSetMatch[2], 10);
+        patch.nglByDevice = { [idx]: nLayer };
+    }
+
+    const nglPairMatch = /set ngl_per_device\[(\d+)\]\.\(n_layer,\s*n_part\)=\((\d+),\s*(\d+)\)/i.exec(line);
+    if (nglPairMatch) {
+        const idx = Number.parseInt(nglPairMatch[1], 10);
+        const nLayer  = Number.parseInt(nglPairMatch[2], 10);
+        patch.nglByDevice = { [idx]: nLayer };
+    }
+
+    postFitProgress(jobId, patch);
+}
+
+function onModuleLogChunk(jobId, chunk) {
+    if (jobId == null) {
+        return;
+    }
+
+    const chunkText = String(chunk ?? '');
+    const prev = lineBuffers.get(jobId) || '';
+
+    // Emscripten print callbacks may deliver one complete log line without a trailing newline.
+    // Parse these immediately so UI progress/log output updates live.
+    if (prev.length === 0 && chunkText.length > 0 && !/[\r\n]/.test(chunkText)) {
+        parseFitProgressLine(jobId, chunkText);
+        return;
+    }
+
+    const merged = prev + chunkText;
+    const lines = merged.split(/\r?\n/);
+    const tail = lines.pop() || '';
+
+    for (const line of lines) {
+        parseFitProgressLine(jobId, line);
+    }
+
+    lineBuffers.set(jobId, tail);
+}
+
+function flushModuleLogBuffer(jobId) {
+    if (jobId == null) {
+        return;
+    }
+
+    const tail = lineBuffers.get(jobId);
+    if (tail && tail.trim().length > 0) {
+        parseFitProgressLine(jobId, tail);
+    }
+    lineBuffers.delete(jobId);
 }
 
 function callPredict(module, request) {
@@ -204,6 +322,8 @@ async function ensureModule(config) {
 
         const module = await self.createVRAMPredictorModule({
             locateFile: (path) => new URL(path, normalizedConfig.wasmJsUrl).toString(),
+            print: (text) => onModuleLogChunk(activeJobId, text),
+            printErr: (text) => onModuleLogChunk(activeJobId, text),
         });
 
         if (module == null || module.FS == null || typeof module.ccall !== 'function') {
@@ -275,16 +395,32 @@ async function handlePredict(message) {
 
     try {
         const request = buildPredictRequest(message.options, virtualPath);
+        activeJobId = message.jobId;
+        progressStateByJob.delete(message.jobId);
+        lineBuffers.delete(message.jobId);
+
+        postFitProgress(message.jobId, {
+            attempt: 0,
+            nCtx: Number.isFinite(Number(request?.runtime?.n_ctx)) ? Number(request.runtime.n_ctx) : null,
+            nGpuLayers: Number.isFinite(Number(request?.runtime?.n_gpu_layers)) ? Number(request.runtime.n_gpu_layers) : null,
+            lastLine: 'fit started',
+        });
+
         let response = callPredict(module, request);
 
-        if (isThreadCtorError(response) && request.fit.show_fit_logs) {
+        if (isThreadCtorError(response) && request.show_fit_logs) {
             debugError('handlePredict.retryWithoutFitLogs', { firstResponse: response });
-            request.fit.show_fit_logs = false;
+            request.show_fit_logs = false;
             response = callPredict(module, request);
         }
 
         return response;
     } finally {
+        flushModuleLogBuffer(message.jobId);
+        progressStateByJob.delete(message.jobId);
+        if (activeJobId === message.jobId) {
+            activeJobId = null;
+        }
         for (const sp of shardPaths) {
             try { module.FS.unlink(sp); } catch (_) { /* best-effort */ }
         }

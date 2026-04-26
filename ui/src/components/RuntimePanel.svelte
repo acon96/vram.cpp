@@ -4,17 +4,24 @@
      *
      * @typedef {object} Params
      * @property {number} nCtx
+     * @property {boolean} nCtxAuto
      * @property {number} nBatch
      * @property {number} nUbatch
      * @property {string} cacheTypeK
      * @property {string} cacheTypeV
      * @property {number} nGpuLayers
+        * @property {string} splitMode
      */
 
     /** @type {{ params: Params, onchange: (p: Params) => void }} */
     let { params, onchange } = $props();
 
     const KV_TYPES = ['f16', 'q8_0', 'q4_0'];
+    const SPLIT_MODES = [
+        { value: 'layer', label: 'layer' },
+        { value: 'row', label: 'row' },
+        { value: 'tensor', label: 'tensor' },
+    ];
 
     // Snap points for the context slider — powers of 2 from 512 up to 256k, plus 400k.
     const CTX_SNAP_POINTS = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 409600];
@@ -44,6 +51,10 @@
         }
     }
 
+    function onAutoCtxChange(e) {
+        update({ nCtxAuto: e.currentTarget.checked });
+    }
+
     function update(patch) {
         onchange({ ...params, ...patch });
     }
@@ -71,18 +82,27 @@
 </script>
 
 <div class="runtime-panel">
-    <div class="field">
-        <label for="n-ctx">Context length (n_ctx)</label>
-        <div class="ctx-row">
-            <input
-                id="n-ctx"
-                type="range"
-                min="0"
-                max={CTX_SNAP_POINTS.length - 1}
-                step="1"
-                value={ctxToSliderIndex(params.nCtx)}
-                oninput={onCtxSliderChange}
-            />
+    <div class="field-row">
+        <div class="field">
+            <label for="n-ctx">Context length (n_ctx)</label>
+            <div class="ctx-row">
+                <input
+                    id="n-ctx"
+                    type="range"
+                    min="0"
+                    max={CTX_SNAP_POINTS.length - 1}
+                    step="1"
+                    value={ctxToSliderIndex(params.nCtx)}
+                    oninput={onCtxSliderChange}
+                />
+            </div>
+            <div class="ctx-marks">
+                {#each CTX_SNAP_POINTS as pt}
+                    <span>{pt >= 1024 ? `${pt / 1024}k` : pt}</span>
+                {/each}
+            </div>
+        </div>
+        <div class="small-field">
             <input
                 class="ctx-text"
                 type="number"
@@ -92,11 +112,15 @@
                 value={params.nCtx}
                 oninput={onCtxTextChange}
             />
-        </div>
-        <div class="ctx-marks">
-            {#each CTX_SNAP_POINTS as pt}
-                <span>{pt >= 1024 ? `${pt / 1024}k` : pt}</span>
-            {/each}
+            <div class="field-row">
+                <span class="hint">Min Ctx?</span>
+                <input
+                    class="ctx-checkbox"
+                    type="checkbox"
+                    checked={params.nCtxAuto}
+                    oninput={onAutoCtxChange}
+                />
+            </div>
         </div>
     </div>
 
@@ -127,9 +151,9 @@
         </div>
     </div>
 
-    <div class="field">
-        <label for="gpu-layers">GPU layers (n_gpu_layers)</label>
-        <div class="input-row">
+    <div class="field-row">
+        <div class="field">
+            <label for="gpu-layers">GPU layers (n_gpu_layers)</label>
             <input
                 id="gpu-layers"
                 type="number"
@@ -140,6 +164,23 @@
             />
             <span class="hint">{params.nGpuLayers === -1 ? 'all layers on GPU' : params.nGpuLayers === 0 ? 'CPU only' : `${params.nGpuLayers} layers`}</span>
         </div>
+        <div class="field">
+            <label for="split-mode">Split mode</label>
+            <select
+                id="split-mode"
+                value={params.splitMode ?? 'layer'}
+                onchange={(e) => update({ splitMode: e.currentTarget.value })}
+            >
+                {#each SPLIT_MODES as mode}
+                    <option value={mode.value}>{mode.label}</option>
+                {/each}
+            </select>
+        </div>
+    </div>
+
+    <div class="field">
+        
+        
     </div>
 
     <div class="field-row">
@@ -183,9 +224,17 @@
         flex: 1;
     }
 
+    .small-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        width: 100px;
+    }
+
     .field-row {
         display: flex;
         gap: 12px;
+        flex-direction: row;
     }
 
     label {
@@ -207,6 +256,8 @@
         display: flex;
         align-items: center;
         gap: 10px;
+        padding-left: 0px;
+        padding-right: 6px;
     }
 
     .ctx-row input[type='range'] {
@@ -218,6 +269,7 @@
         flex-shrink: 0;
         font-family: var(--text-muted);
         font-size: 0.85rem !important;
+        margin-bottom: 10px;
     }
 
     .ctx-marks {
@@ -233,8 +285,13 @@
         font-family: var(--mono);
     }
 
+    .ctx-checkbox {
+        padding-top: 20px;
+    }
+
     .hint {
         font-size: 0.75rem;
         color: var(--text-muted);
+        line-height: 2;
     }
 </style>

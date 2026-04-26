@@ -26,6 +26,12 @@ struct fit_memory_breakdown_totals {
 };
 
 struct fit_execution_request {
+    enum class split_mode_type {
+        layer,
+        row,
+        tensor,
+    };
+
     std::string model_path;
     std::vector<uint64_t> fit_target_mib;
     std::vector<uint64_t> target_free_mib;
@@ -40,6 +46,7 @@ struct fit_execution_request {
     uint32_t n_ubatch = 0;
     uint32_t min_ctx = 0;
     int32_t n_gpu_layers = -1;
+    split_mode_type split_mode = split_mode_type::layer;
 };
 
 struct fit_execution_result {

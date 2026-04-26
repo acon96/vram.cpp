@@ -33,6 +33,14 @@ function createWorkerClient(config, debugEnabled) {
 
     worker.onmessage = (event) => {
         const message = event.data || {};
+        if (message.type === 'progress') {
+            const pendingJob = pending.get(message.jobId);
+            if (pendingJob?.onProgress) {
+                pendingJob.onProgress(message.progress || {});
+            }
+            return;
+        }
+
         if (message.type !== 'result' && message.type !== 'error') {
             return;
         }
@@ -61,10 +69,10 @@ function createWorkerClient(config, debugEnabled) {
      * @param {Record<string, unknown>} payload
      * @param {Transferable[]} [transferList]
      */
-    const sendRequest = (type, payload, transferList = []) => {
+    const sendRequest = (type, payload, transferList = [], { onProgress } = {}) => {
         const jobId = nextJobId++;
         return new Promise((resolve, reject) => {
-            pending.set(jobId, { resolve, reject });
+            pending.set(jobId, { resolve, reject, onProgress });
             worker.postMessage({
                 type,
                 jobId,
@@ -81,7 +89,7 @@ function createWorkerClient(config, debugEnabled) {
 
         /** @param {File|Blob} file
          *  @param {Record<string, unknown>} options */
-        async predictMountedFit(file, options) {
+        async predictMountedFit(file, options, workerOptions = {}) {
             if (file == null || typeof file.arrayBuffer !== 'function') {
                 throw new Error('predictMountedFit requires a browser File or Blob-like object');
             }
@@ -94,12 +102,12 @@ function createWorkerClient(config, debugEnabled) {
                 fileName,
                 fileBuffer,
                 options,
-            }, [fileBuffer]);
+            }, [fileBuffer], workerOptions);
         },
 
         /** @param {File|Blob|null} file
          *  @param {Record<string, unknown>} request */
-        async predictMountedJson(file, request) {
+        async predictMountedJson(file, request, workerOptions = {}) {
             let fileBuffer;
             let fileName = 'model.gguf';
             const transferList = [];
@@ -120,7 +128,12 @@ function createWorkerClient(config, debugEnabled) {
                 fileName,
                 fileBuffer,
                 request,
-            }, transferList);
+            }, transferList, workerOptions);
+        },
+
+        cancelActiveJob() {
+            rejectAllPending('predictor_worker_cancelled');
+            worker.terminate();
         },
 
         terminate() {

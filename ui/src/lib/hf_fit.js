@@ -357,7 +357,7 @@ async function fetchShardHeadersIfNeeded(preparedFit, selection, logger) {
  * If preparedFit.shardHeaders is non-empty the stub shard files are mounted
  * alongside the primary file before the fit is run.
  */
-export async function runFitFromPreparedPrefix(client, preparedFit, predictInput, logger) {
+export async function runFitFromPreparedPrefix(client, preparedFit, predictInput, logger, onProgress) {
     const fileName = preparedFit.originalFileName || 'hf_cached_prefix.gguf';
     const fitFile  = new File([preparedFit.prefixBytes], fileName, { type: 'application/octet-stream' });
 
@@ -384,7 +384,7 @@ export async function runFitFromPreparedPrefix(client, preparedFit, predictInput
         shardCount:           shardFiles.length,
     });
 
-    const fitResponse = await client.predictMountedFit(fitFile, fitInput);
+    const fitResponse = await client.predictMountedFit(fitFile, fitInput, { onProgress });
     return {
         ...fitResponse,
         source:     'huggingface',
@@ -480,8 +480,9 @@ export async function runHfMetadataFromBrowser(client, selection, { logger }) {
  * @param {object} opts
  * @param {(preparedFit: object) => void} opts.onPreparedFit  callback to cache the prepared fit in app state
  * @param {{ log: Function, error: Function }} [opts.logger]
+ * @param {(progress: object) => void} [opts.onProgress]
  */
-export async function runHfFitFromBrowser(client, selection, predictInput, { onPreparedFit, logger }) {
+export async function runHfFitFromBrowser(client, selection, predictInput, { onPreparedFit, logger, onProgress }) {
     const resolvedUrl  = (selection?.resolvedUrl || '').trim();
     const canonicalUrl = buildCanonicalHfFileUrl(selection || {});
 
@@ -534,7 +535,7 @@ export async function runHfFitFromBrowser(client, selection, predictInput, { onP
                 shardCount: preparedFit.shardHeaders?.length ?? 0,
             });
 
-            const fitResponse = await runFitFromPreparedPrefix(client, preparedFit, predictInput, logger);
+            const fitResponse = await runFitFromPreparedPrefix(client, preparedFit, predictInput, logger, onProgress);
             logger?.log('hf.browserFit.fit.done', { ok: fitResponse?.ok });
             return fitResponse;
         } catch (error) {

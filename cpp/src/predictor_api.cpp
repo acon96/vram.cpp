@@ -364,6 +364,38 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
                 args.push_back(std::to_string(runtime["n_gpu_layers"].get<int64_t>()));
             }
 
+            vram::fit_execution_request::split_mode_type split_mode = vram::fit_execution_request::split_mode_type::layer;
+            if (runtime.contains("split_mode")) {
+                if (!runtime["split_mode"].is_string()) {
+                    json error = {
+                        {"ok", false},
+                        {"error", "runtime.split_mode_must_be_string_when_present"}
+                    };
+                    response = error.dump();
+                    return response.c_str();
+                }
+
+                const std::string split_mode_name = runtime["split_mode"].get<std::string>();
+                if (split_mode_name == "layer") {
+                    split_mode = vram::fit_execution_request::split_mode_type::layer;
+                } else if (split_mode_name == "row") {
+                    split_mode = vram::fit_execution_request::split_mode_type::row;
+                } else if (split_mode_name == "tensor") {
+                    split_mode = vram::fit_execution_request::split_mode_type::tensor;
+                } else {
+                    json error = {
+                        {"ok", false},
+                        {"error", "runtime.split_mode_invalid"},
+                        {"value", split_mode_name}
+                    };
+                    response = error.dump();
+                    return response.c_str();
+                }
+
+                args.push_back("--split-mode");
+                args.push_back(split_mode_name);
+            }
+
             if (show_fit_logs) {
                 args.push_back("--show-fit-logs");
             }
@@ -385,6 +417,7 @@ extern "C" const char * vram_predictor_predict_json(const char * request_json) {
             exec_request.n_gpu_layers = runtime.contains("n_gpu_layers") && runtime["n_gpu_layers"].is_number_integer()
                 ? static_cast<int32_t>(runtime["n_gpu_layers"].get<int64_t>())
                 : -1;
+            exec_request.split_mode = split_mode;
 
             vram::fit_execution_result exec_result;
             std::string exec_error;

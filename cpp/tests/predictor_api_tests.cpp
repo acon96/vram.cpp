@@ -319,6 +319,53 @@ void test_fit_mode_invalid_backend_profile() {
     assert(contains(body, "\"error\":\"device.gpus[].backend_invalid\""));
 }
 
+void test_fit_mode_split_mode_parsing() {
+    const std::string request =
+        "{"
+        "\"mode\":\"fit\","
+        "\"model\":{\"source\":\"local\",\"path\":\"/tmp/sample.gguf\"},"
+        "\"runtime\":{\"n_ctx\":4096,\"n_gpu_layers\":-1,\"split_mode\":\"row\",\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{"
+            "\"host_ram_bytes\":34359738368,"
+            "\"fit_target_mib\":[512],"
+            "\"gpus\":["
+                "{\"id\":\"gpu0\",\"backend\":\"metal\",\"free_bytes\":8589934592,\"total_bytes\":12884901888}"
+            "]"
+        "},"
+        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\"}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":true"));
+    assert(contains(body, "--split-mode"));
+    assert(contains(body, "\"row\""));
+}
+
+void test_fit_mode_invalid_split_mode() {
+    const std::string request =
+        "{"
+        "\"mode\":\"fit\","
+        "\"model\":{\"source\":\"local\",\"path\":\"/tmp/sample.gguf\"},"
+        "\"runtime\":{\"n_ctx\":4096,\"n_gpu_layers\":-1,\"split_mode\":\"invalid\",\"cache_type_k\":\"f16\",\"cache_type_v\":\"f16\"},"
+        "\"device\":{"
+            "\"host_ram_bytes\":34359738368,"
+            "\"fit_target_mib\":[512],"
+            "\"gpus\":["
+                "{\"id\":\"gpu0\",\"free_bytes\":8589934592,\"total_bytes\":12884901888}"
+            "]"
+        "},"
+        "\"fit\":{\"fit_harness_binary\":\"vram_fit_harness\"}"
+        "}";
+
+    const char * response = vram_predictor_predict_json(request.c_str());
+    const std::string body(response == nullptr ? "" : response);
+
+    assert(contains(body, "\"ok\":false"));
+    assert(contains(body, "\"error\":\"runtime.split_mode_invalid\""));
+}
+
 } // namespace
 
 int main() {
@@ -333,5 +380,7 @@ int main() {
     test_fit_mode_heterogeneous_gpu_planning();
     test_fit_mode_backend_profile_parsing();
     test_fit_mode_invalid_backend_profile();
+    test_fit_mode_split_mode_parsing();
+    test_fit_mode_invalid_split_mode();
     return 0;
 }

@@ -269,7 +269,7 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Added a `HuggingFaceSearch` UI component that searches HF repos and loads candidate `.gguf` files from the selected repo/revision tree.
   - [x] Wired a metadata validation preflight that runs browser-side range fetch + parser calls through the wasm worker and surfaces errors/metadata in the UI.
   - [x] Updated the model input layout to an explicit top-level "Upload" OR "Search on HF" switch next to existing upload flow.
-17. [ ] Support common GPUs + MacOS with pre-configured device profiles for VRAM + compute capability so the fit code can make a properly informed recommendation against specific quantizations.
+17. [x] Properly implement fit execution in the wasm module using the existing llama/common fit code, with simulated backend devices for deterministic memory reporting and API-level backend profile selection.
   - [x] Added a new simulated backend module (`cpp/src/sim_backend.cpp`, `cpp/include/vram/sim_backend.h`) that exposes profile-aware fake ggml GPU devices (CUDA/Metal/Vulkan/Generic) with configurable free/total memory and null-terminated `ggml_backend_dev_t *` wiring for `llama_model_params.devices`.
   - [x] Routed in-process fit execution through `sim_backend` + stock `common_fit_params(...)` so predictor API fit execution no longer calls patched `common_fit_params_with_memory_override(...)`.
   - [x] Threaded optional per-device backend profile selection through API request parsing (`device.gpus[].backend`) and validated it in predictor API tests.
@@ -277,10 +277,20 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
   - [x] Refined simulated device memory accounting so `ggml_backend_dev_memory` reports post-allocation free bytes (reducing negative/unbounded unaccounted memory artifacts in debug tables).
   - [x] Corrected `target_free_mib` to fit-margin conversion so large simulated free-memory values do not inflate margin requirements and force unexpected host placement.
   - [x] Removed the vendor `common_fit_params_with_memory_override(...)` surface and rewired `vram_fit_harness` onto the shared `execute_fit_request(...)` path.
-  - [ ] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel (cuda, metal, vulkan, etc.)
-  - [ ] Add hard coded profiles for common GPUs with total memory and backend profile presets
-  - [ ] Add support for split modes (layer, row, tensor) and other llama.cpp knobs that affect memory allocation/usage
-18. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
+18. [x] Implement remaining features, knobs, and UI polish, such as:
+  - [x] Add explicit UI controls for choosing per-device backend profiles in the Svelte parameter panel (cuda, metal, vulkan, etc.)
+  - [x] Add hard coded profiles for common GPUs with total memory and backend profile presets
+  - [x] Add support for split modes (layer, row, tensor) and other llama.cpp knobs that affect memory allocation/usage
+  - [x] Figure out how to visually indicate the progress of the fit execution (i.e. number of attempts/iterations?)
+  - [x] probably need to detect the number of iterations the fit algorithm has gone through and show "Fitting... (attempt ##)" below the spinner
+    - to detect the iterations as well as the current ngl and nctx being tested, we should parse the logs coming out of the fit execution. to do that we need to stop sending out the debug logs and only send the info level logs. this also means we should re-check if us enabling the virtual pthreads thingy allows the built in logging system for llama.cpp to work with emscripten.
+  - [x] allow cancelling the fit attempt if it's taking too long or the user wants to adjust parameters and try again. this would involve adding a cancellation mechanism to the API and the wasm worker, and then adding a "Cancel" button in the UI that triggers it.
+  - [ ] finish wiring up the min ctx checkbox and add a tooltip explaining that enabling it tells llama.cpp to treat it as a minimum context size and might go higher if it fits. this will also require passing it to the backend correctly.
+  - [ ] When I click on the "Retrieve Tensor Info" button. there should be a loading info text block that updates continuously through the gguf fetch process, while it is parsed/validated, as well as any follow up requests that happen to pull down further shard chunks.
+  - [ ] remove the "parroting" back of values in `fit_execution_result` `fit_execution_request` and just generally make that API interface simpler, there's a ton of unnecessary info being passed around there
+  - [ ] don't surface the true debug logs in the web viewer. they come across on stderr instead of stdout. there's a ton of noise from each model load and fit attempt that isn't really useful for the user to see
+  - [ ] make sure you catch the attempts and iterations of the fit loop that happen at the beginning when trying a few different layouts and prior to iterating over the n_gpu_layers and n_ctx sizes. the text you need to look for might be slightly different for those first few loops
+19. [ ] Set up github actions to build and deploy the app to a GitHub Pages site; once that works we want to grab any new llama.cpp model architectures (run nightly)
   - [ ] Create an initial "unified" build process that builds the wasm module and packages the bundle with the UI for static hosting; likely some sort of vite build plugin
   - [ ] create a GitHub actions pipeline that runs the build process whenever there is a push to the main branch; should publish the built app to a GitHub Pages site using the pre-built action
   - [ ] Add a nightly workflow that checks for new commits to the llama.cpp repo, and if it detects any, updates the submodule commit reference and pushes a commit to the main branch to trigger a rebuild and redeploy of the app with the latest llama.cpp changes.
@@ -298,10 +308,6 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - [x] Auto assign the device index based on the order they are in the UI. the user doesn't need to select them directly
 - [x] Metadata preview should be collapsed and not cause the UI to jump when it loads/appears. basically put the drawer behind a button that is enabled once the metadata is verified
 - [x] Move the 'Runtime' parameters section to be on the same row as the 'Model' section and expand the remaining parameters to fill that row and make it into the 'Hardware Config' section.
-- [ ] Figure out how to visually indicate the progress of the fit execution (i.e. number of attempts/iterations?)
-  - probably need to detect the number of iterations the fit algorithm has gone through and show "Fitting... (attempt ##)" below the spinner
-  - also probably should allow cancelling the fit attempt if it's taking too long or the user wants to adjust parameters and try again. this would involve adding a cancellation mechanism to the API and the wasm worker, and then adding a "Cancel" button in the UI that triggers it.
-
 - [ ] Disable as much of the remaining llama.cpp build as possible to reduce the wasm binary size
 
 ### Cleanup:
@@ -312,7 +318,6 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - [x] reduce the number of "build targets" for the cpp part of the project. 
   - there shouldn't be the ability to build **without** llama.cpp vendored in. unit testing against the core logic without llama.cpp doesn't help a ton since the main point of the project is to run the actual llama-fit code in wasm or native.
   - removed the old optional-vendor CMake path and the related `VRAM_ENABLE_VENDOR_LLAMA` / `VRAM_HAS_LLAMA_FIT_EXECUTION` compatibility branches.
-- [ ] remove the "parroting" back of values in `fit_execution_result` `fit_execution_request` and just generally make that API interface simpler, there's a ton of unnecessary info being passed around there
 - [ ] Work through the entire codebase and find any unnecessary complications in the arguments, responses, and API surfaces. 
   - The goal would be to remove extra logic and handling for scenarios that don't exist in the codebase.
   - Basically a reverse YAGNI pass to simplify the code and make it easier to maintain. For example, if there are any parameters that are accepted but not actually used anywhere in the code, those should be removed.
@@ -360,3 +365,4 @@ This gives immediate value with low bandwidth cost and creates a clean base for 
 - 2026-04-24: Added Hugging Face repo search + GGUF file selection UI, integrated metadata validation/submission flow through the WASM worker predictor API, and surfaced metadata responses in the results panel.
 - 2026-04-24: Addressed UI tweaks and bug fixes: deduplicated fit-target params into per-GPU bufferMiB, trimmed KV cache type options to f16/q8_0/q4_0, fixed split GGUF filename mounting, auto-assigned device index from position, collapsed metadata preview behind toggle button, restructured layout into Model+Runtime row and Hardware Config row (split ParamPanel into RuntimePanel + HardwarePanel).
 - 2026-04-25: Moved the browser helper into `ui/src/lib`, removed the old `web/` smoke harness, and switched the browser Hugging Face metadata parse flow to `@huggingface/gguf` while fetching only the exact stub-prefix bytes needed for wasm fit mounting.
+- 2026-04-25: Completed item 18 fit UX/runtime slice: added split-mode runtime controls (`layer`/`row`/`tensor`) wired through predictor API + fit executor, added worker-side fit progress parsing (attempt/n_ctx/n_gpu_layers) from info-level fit logs, and added cancellable runs via worker cancellation + UI cancel button.

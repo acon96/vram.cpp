@@ -5,7 +5,7 @@
     import JsonHarness from './components/JsonHarness.svelte';
     import ResultsTable from './components/ResultsTable.svelte';
     import RuntimePanel from './components/RuntimePanel.svelte';
-    import { initPredictorWorker } from './lib/predictor_worker_client.js';
+    import { initPredictorWorker, resetPredictorWorker } from './lib/predictor_worker_client.js';
     import { giBToBytes } from './lib/format.js';
     import { buildHfSelectionCacheKey } from './lib/hf_utils.js';
     import { runHfMetadataFromBrowser, runHfFitFromBrowser, runFitFromPreparedPrefix } from './lib/hf_fit.js';
@@ -40,10 +40,13 @@
     function normalizeHardwareGpu(input, fallbackIndex) {
         const totalGiB  = Number.isFinite(Number(input?.totalGiB)) ? Math.max(0.5, Number(input.totalGiB)) : 8;
         const bufferMiB = Number.isFinite(Number(input?.bufferMiB)) ? Math.max(0, Math.trunc(Number(input.bufferMiB))) : 512;
+        const backendRaw = typeof input?.backend === 'string' ? input.backend.toLowerCase() : 'cuda';
+        const backend = ['cuda', 'metal', 'vulkan', 'generic'].includes(backendRaw) ? backendRaw : 'cuda';
         return {
             name: typeof input?.name === 'string' && input.name.trim().length > 0 ? input.name : `GPU ${fallbackIndex}`,
             totalGiB,
             bufferMiB,
+            backend,
         };
     }
 
@@ -70,6 +73,7 @@
         cacheTypeK: 'f16',
         cacheTypeV: 'f16',
         nGpuLayers: -1,
+        splitMode: 'layer',
         hostRamGiB: 32,
         gpus: [],
     };
@@ -103,6 +107,9 @@
     let status = $state('idle'); // 'idle' | 'loading-wasm' | 'running' | 'done' | 'error'
     let errorMsg = $state('');
     let result = $state(null);
+    let fitProgress = $state({ attempt: 0, nCtx: null, nGpuLayers: null, lastLine: '' });
+    let fitLogLines = $state([]);
+    let activeWorkerClient = $state(null);
 
     // ── Handlers ──────────────────────────────────────────────────────────────
     function handleModelSourceChange(nextSource) {
@@ -158,7 +165,7 @@
         const gpus = params.gpus.map((g, i) => {
             const name = typeof g.name === 'string' ? g.name.trim() : '';
             return {
-                id: name || `gpu${i}`, name, index: i, backend: 'cuda',
+                id: name || `gpu${i}`, name, index: i, backend: g.backend ?? 'cuda',
                 // free_bytes == total_bytes: reserve policy is controlled by target_free_mib
                 free_bytes:  giBToBytes(g.totalGiB),
                 total_bytes: giBToBytes(g.totalGiB),
@@ -175,10 +182,48 @@
             gpus,
             nCtx: params.nCtx, nBatch: params.nBatch, nUbatch: params.nUbatch,
             nGpuLayers: params.nGpuLayers,
+            splitMode: params.splitMode,
             cacheTypeK: params.cacheTypeK, cacheTypeV: params.cacheTypeV,
             minCtx: 512,
-            showFitLogs: wasmFitLogsEnabled,
+            // Enable fit logs for worker-side progress parsing; worker fallback disables if unsupported.
+            showFitLogs: true,
         };
+    }
+
+    function handleFitProgress(progress) {
+        const nextLine = typeof progress?.lastLine === 'string' ? progress.lastLine.trim() : '';
+        if (nextLine.length > 0) {
+            const lastLine = fitLogLines.length > 0 ? fitLogLines[fitLogLines.length - 1] : '';
+            if (nextLine !== lastLine) {
+                fitLogLines = [...fitLogLines, nextLine].slice(-120);
+            }
+        }
+
+        fitProgress = {
+            attempt: Number.isFinite(Number(progress?.attempt)) ? Math.max(0, Math.trunc(Number(progress.attempt))) : fitProgress.attempt,
+            nCtx: Number.isFinite(Number(progress?.nCtx)) ? Math.max(0, Math.trunc(Number(progress.nCtx))) : fitProgress.nCtx,
+            nGpuLayers: Number.isFinite(Number(progress?.nGpuLayers)) ? Math.max(0, Math.trunc(Number(progress.nGpuLayers))) : fitProgress.nGpuLayers,
+            lastLine: typeof progress?.lastLine === 'string' ? progress.lastLine : fitProgress.lastLine,
+        };
+    }
+
+    function cancelPrediction() {
+        if (!isRunning || activeWorkerClient == null) {
+            return;
+        }
+
+        try {
+            activeWorkerClient.cancelActiveJob();
+        } catch (err) {
+            logger.error('cancelPrediction.error', { err });
+        }
+
+        resetPredictorWorker();
+        activeWorkerClient = null;
+        status = 'idle';
+        errorMsg = '';
+        fitProgress = { attempt: 0, nCtx: null, nGpuLayers: null, lastLine: '' };
+        fitLogLines = [];
     }
 
     // ── HF validate (metadata-only pass) ────────────────────────────────────
@@ -231,10 +276,13 @@
         }
 
         status = 'loading-wasm'; errorMsg = ''; result = null;
+        fitProgress = { attempt: 0, nCtx: null, nGpuLayers: null, lastLine: '' };
+        fitLogLines = [];
 
         let client;
         try {
             client = await initPredictorWorker({ wasmJsUrl, debugEnabled: wasmDebugEnabled });
+            activeWorkerClient = client;
             try { logger.log('systemInfo', await client.getSystemInfo()); } catch { /* optional */ }
         } catch (err) {
             status = 'error'; errorMsg = `Failed to load WASM module: ${err.message}`;
@@ -244,6 +292,12 @@
         status = 'running';
         try {
             const predictInput = buildPredictFitInput();
+            fitProgress = {
+                attempt: 0,
+                nCtx: predictInput.nCtx,
+                nGpuLayers: predictInput.nGpuLayers,
+                lastLine: 'fit started',
+            };
 
             if (modelSource === 'huggingface') {
                 const cacheKey   = buildHfSelectionCacheKey(hfSelection);
@@ -252,11 +306,12 @@
 
                 const t0  = performance.now();
                 const res = hasCached
-                    ? await runFitFromPreparedPrefix(client, hfPreparedFit, predictInput, logger)
-                    : await runHfFitFromBrowser(client, hfSelection, predictInput, {
+                    ? await runFitFromPreparedPrefix(client, hfPreparedFit, predictInput, logger, handleFitProgress)
+                    : await runHfFitFromBrowser(client, hfSelection, predictInput, /** @type {any} */ ({
                         onPreparedFit: (pf) => { hfPreparedFit = pf; },
                         logger,
-                    });
+                        onProgress: handleFitProgress,
+                    }));
                 logger.log('runPrediction.hf.done', { ms: Math.round((performance.now() - t0) * 10) / 10, ok: res?.ok });
 
                 result = res;
@@ -269,7 +324,7 @@
             }
 
             const t0  = performance.now();
-            const res = await client.predictMountedFit(selectedFile, predictInput);
+            const res = await client.predictMountedFit(selectedFile, predictInput, { onProgress: handleFitProgress });
             logger.log('runPrediction.local.done', { ms: Math.round((performance.now() - t0) * 10) / 10, ok: res?.ok });
 
             result = res;
@@ -277,14 +332,31 @@
                 status = 'error'; errorMsg = buildFitFailureDetails(res, predictInput).message;
             } else { status = 'done'; }
         } catch (err) {
-            status = 'error'; errorMsg = err.message ?? String(err);
-            logger.error('runPrediction.error', { err });
+            const message = err?.message ?? String(err);
+            if (message.includes('predictor_worker_cancelled')) {
+                status = 'idle';
+                errorMsg = '';
+                logger.log('runPrediction.cancelled', {});
+            } else {
+                status = 'error'; errorMsg = message;
+                logger.error('runPrediction.error', { err });
+            }
+        } finally {
+            activeWorkerClient = null;
         }
     }
 
     const isRunning   = $derived(status === 'loading-wasm' || status === 'running');
     const canRun      = $derived(modelSource === 'local' ? selectedFile != null : hfSelection.validated === true);
     const statusLabel = $derived({ idle: '', 'loading-wasm': 'Preparing WASM worker…', running: 'Running fit prediction…', done: '', error: '' }[status] ?? '');
+    const progressLabel = $derived((() => {
+        if (status !== 'running') return '';
+        const parts = [];
+        if ((fitProgress?.attempt ?? 0) > 0) parts.push(`attempt ${fitProgress.attempt}`);
+        if (Number.isFinite(Number(fitProgress?.nCtx))) parts.push(`n_ctx ${fitProgress.nCtx}`);
+        if (Number.isFinite(Number(fitProgress?.nGpuLayers))) parts.push(`n_gpu_layers ${fitProgress.nGpuLayers}`);
+        return parts.join(' • ');
+    })());
 </script>
 
 <div class="app-shell">
@@ -346,6 +418,12 @@
                         ▶ Predict VRAM
                     {/if}
                 </button>
+                {#if isRunning}
+                    <button class="cancel-btn" type="button" onclick={cancelPrediction}>Cancel</button>
+                {/if}
+                {#if progressLabel}
+                    <p class="hint-msg progress-msg">{progressLabel}</p>
+                {/if}
                 {#if modelSource === 'huggingface' && !hfSelection.validated}
                     <p class="hint-msg">Select a Hugging Face model to enable fitting.</p>
                 {:else if modelSource === 'local' && selectedFile == null}
@@ -365,6 +443,16 @@
                     <div class="loading-state">
                         <span class="spinner lg" aria-hidden="true"></span>
                         <p>{statusLabel}</p>
+                        {#if progressLabel}
+                            <p class="progress-inline">{progressLabel}</p>
+                        {/if}
+                        {#if fitLogLines.length > 0}
+                            <div class="fit-log-view" role="log" aria-live="polite">
+                                {#each fitLogLines as line}
+                                    <div class="fit-log-line">{line}</div>
+                                {/each}
+                            </div>
+                        {/if}
                     </div>
                 {:else}
                     <ResultsTable {result} />
@@ -560,6 +648,21 @@
     .run-btn:active:not(:disabled) { transform: scale(0.98); }
     .run-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
+    .cancel-btn {
+        width: 100%;
+        padding: 10px;
+        background: transparent;
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-size: 0.92rem;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+    }
+
+    .cancel-btn:hover { background: var(--surface-raised); }
+
     .error-msg {
         margin: 0;
         font-size: 0.85rem;
@@ -578,6 +681,10 @@
         border-radius: 6px;
     }
 
+    .progress-msg {
+        font-family: var(--mono);
+    }
+
     .loading-state {
         display: flex;
         flex-direction: column;
@@ -590,6 +697,32 @@
     }
 
     .loading-state p { margin: 0; font-size: 0.9rem; }
+
+    .loading-state .progress-inline {
+        font-family: var(--mono);
+        font-size: 0.82rem;
+    }
+
+    .fit-log-view {
+        width: 100%;
+        max-height: 180px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-raised);
+        padding: 8px;
+        box-sizing: border-box;
+        text-align: left;
+    }
+
+    .fit-log-line {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        color: var(--text-secondary);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.35;
+    }
 
     .spinner {
         display: inline-block;

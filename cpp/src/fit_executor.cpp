@@ -291,7 +291,18 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     cparams.n_threads_batch = 1;
 #endif
     mparams.n_gpu_layers = request.n_gpu_layers;
-    mparams.split_mode = LLAMA_SPLIT_MODE_LAYER; // FIXME: expose as an option to user
+    switch (request.split_mode) {
+        case fit_execution_request::split_mode_type::row:
+            mparams.split_mode = LLAMA_SPLIT_MODE_ROW;
+            break;
+        case fit_execution_request::split_mode_type::tensor:
+            mparams.split_mode = LLAMA_SPLIT_MODE_TENSOR;
+            break;
+        case fit_execution_request::split_mode_type::layer:
+        default:
+            mparams.split_mode = LLAMA_SPLIT_MODE_LAYER;
+            break;
+    }
 
     std::vector<float> tensor_split(llama_max_devices(), 0.0f);
     std::vector<llama_model_tensor_buft_override> tbo(llama_max_tensor_buft_overrides());
@@ -349,13 +360,14 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
         llama_log_set(emscripten_passthrough_log_callback, nullptr);
         llama_logger_overridden = true;
         std::fprintf(stderr,
-            "[vram-fit] request model=%s n_ctx=%u n_batch=%u n_ubatch=%u min_ctx=%u n_gpu_layers=%d fit_target_mib=%s target_free_mib=%s override_device_free_mib=%s override_device_total_mib=%s override_host_free_mib=%llu override_host_total_mib=%llu\n",
+            "[vram-fit] request model=%s n_ctx=%u n_batch=%u n_ubatch=%u min_ctx=%u n_gpu_layers=%d split_mode=%d fit_target_mib=%s target_free_mib=%s override_device_free_mib=%s override_device_total_mib=%s override_host_free_mib=%llu override_host_total_mib=%llu\n",
             request.model_path.c_str(),
             request.n_ctx,
             request.n_batch,
             request.n_ubatch,
             request.min_ctx,
             request.n_gpu_layers,
+            static_cast<int>(mparams.split_mode),
             join_u64_csv(request.fit_target_mib).c_str(),
             join_u64_csv(request.target_free_mib).c_str(),
             join_u64_csv(simulated_device_free_mib).c_str(),
@@ -371,15 +383,14 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
     }
 
 #if defined(__EMSCRIPTEN__)
-    if (!request.show_fit_logs) {
-        phase = "suppress_common_fit_logs";
-        original_common_log_verbosity = common_log_get_verbosity_thold();
-        common_log_set_verbosity_thold(-1);
-        common_log_verbosity_overridden = true;
-    }
+    phase = request.show_fit_logs ? "set_common_fit_log_verbosity_info" : "suppress_common_fit_logs";
+    original_common_log_verbosity = common_log_get_verbosity_thold();
+    common_log_set_verbosity_thold(request.show_fit_logs ? LOG_DEFAULT_LLAMA : -1);
+    common_log_verbosity_overridden = true;
 #endif
 
     phase = "run_fit";
+    const ggml_log_level fit_log_level = request.show_fit_logs ? GGML_LOG_LEVEL_INFO : GGML_LOG_LEVEL_ERROR;
     const common_params_fit_status status = common_fit_params(
         request.model_path.c_str(),
         &mparams,
@@ -388,7 +399,7 @@ bool execute_fit_request(const fit_execution_request & request, fit_execution_re
         tbo.data(),
         margins_bytes.data(),
         request.min_ctx,
-        GGML_LOG_LEVEL_ERROR);
+        fit_log_level);
 
     if (common_log_verbosity_overridden) {
         common_log_set_verbosity_thold(original_common_log_verbosity);
