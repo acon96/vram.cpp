@@ -4,4 +4,4 @@ Just go [here](https://acon96.github.io/vram.cpp/) and find out in seconds.
 
 [![Deploy GitHub Pages](https://github.com/acon96/vram.cpp/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/acon96/vram.cpp/actions/workflows/deploy-pages.yml)
 
-llama.cpp base version: b8909
+llama.cpp base version: b8943
