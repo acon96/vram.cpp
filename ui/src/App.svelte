@@ -8,7 +8,7 @@
     import { initPredictorWorker, resetPredictorWorker } from './lib/predictor_worker_client.js';
     import { giBToBytes } from './lib/format.js';
     import { buildHfSelectionCacheKey } from './lib/hf_utils.js';
-    import { runHfMetadataFromBrowser, runHfFitFromBrowser, runFitFromPreparedPrefix } from './lib/hf_fit.js';
+    import { runHfMetadataFromBrowser, runHfFitFromBrowser, runFitFromPreparedPrefix, runFitFromLocalFile } from './lib/hf_fit.js';
     import { tick } from 'svelte';
 
     // ── WASM config ───────────────────────────────────────────────────────────
@@ -363,7 +363,7 @@
             }
 
             const t0  = performance.now();
-            const res = await client.predictMountedFit(selectedFile, predictInput, { onProgress: handleFitProgress });
+            const res = await runFitFromLocalFile(client, selectedFile, predictInput, logger, handleFitProgress);
             logger.log('runPrediction.local.done', { ms: Math.round((performance.now() - t0) * 10) / 10, ok: res?.ok });
 
             result = res;

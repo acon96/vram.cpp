@@ -421,6 +421,39 @@ async function fetchShardHeadersIfNeeded(preparedFit, selection, logger, onStatu
 }
 
 /**
+ * Build a fetch function that satisfies Range byte requests from a local
+ * browser File.  Used to drive the @huggingface/gguf parser without loading
+ * the entire file into memory (avoids Chrome's 2 GiB ArrayBuffer limit).
+ *
+ * @param {File} file
+ * @returns {(url: string, init?: RequestInit) => Promise<Response>}
+ */
+function buildLocalFileFetch(file) {
+    return async (_url, init = {}) => {
+        const rawHeaders = init?.headers;
+        const headers = rawHeaders instanceof Headers
+            ? rawHeaders
+            : new Headers(rawHeaders ?? {});
+
+        const rangeValue = headers.get('Range') ?? headers.get('range') ?? '';
+        const { start, end } = parseRangeHeader(rangeValue);
+        const clampedEnd = end > 0 ? Math.min(end, file.size - 1) : file.size - 1;
+
+        const slice = file.slice(start, clampedEnd + 1);
+        const buffer = await slice.arrayBuffer();
+
+        return new Response(buffer, {
+            status: 206,
+            headers: new Headers({
+                'Content-Range': `bytes ${start}-${clampedEnd}/${file.size}`,
+                'Content-Length': String(buffer.byteLength),
+                'Accept-Ranges': 'bytes',
+            }),
+        });
+    };
+}
+
+/**
  * Mount the cached prefix bytes in the WASM FS and execute a fit predict.
  * If preparedFit.shardHeaders is non-empty the stub shard files are mounted
  * alongside the primary file before the fit is run.
@@ -461,6 +494,58 @@ export async function runFitFromPreparedPrefix(client, preparedFit, predictInput
         attempts:   preparedFit.attempts,
         hfMetadata: preparedFit.metadata ?? null,
     };
+}
+
+/**
+ * Run a fit against a local GGUF file by reading only the header prefix.
+ * Uses @huggingface/gguf with a Range-backed local fetch to determine the
+ * exact tensor data offset, then mounts only those bytes in the WASM FS.
+ * This avoids Chrome's 2 GiB ArrayBuffer limit for large model files.
+ *
+ * @param {object} client
+ * @param {File} file
+ * @param {object} predictInput
+ * @param {{ log?: Function, error?: Function }} [logger]
+ * @param {(progress: object) => void} [onProgress]
+ */
+export async function runFitFromLocalFile(client, file, predictInput, logger, onProgress) {
+    logger?.log('local.gguf.parse.start', { fileName: file.name, fileSize: file.size });
+
+    const parsed = await gguf('local://model', {
+        typedMetadata: true,
+        fetch: buildLocalFileFetch(file),
+    });
+
+    const bytesConsumed = toSafeInteger(parsed?.tensorDataOffset, 0);
+    if (bytesConsumed <= 0) {
+        throw new Error('gguf_tensor_data_offset_invalid');
+    }
+    if (bytesConsumed > MAX_GGUF_PREFIX_BYTES) {
+        throw new Error('gguf_prefix_bytes_exceeds_limit');
+    }
+    const tensorCount = parsed?.tensorInfos?.length ?? 0;
+    if (tensorCount > MAX_GGUF_TENSOR_COUNT) {
+        throw new Error('gguf_tensor_count_exceeds_limit');
+    }
+
+    logger?.log('local.gguf.parse.done', { fileName: file.name, bytesConsumed, tensorCount });
+
+    const prefixBuffer = await file.slice(0, bytesConsumed).arrayBuffer();
+    const prefixBytes  = new Uint8Array(prefixBuffer);
+    const fitFile      = new File([prefixBytes], file.name, { type: 'application/octet-stream' });
+
+    const fitInput = {
+        ...predictInput,
+        virtualFileSizeBytes: file.size > bytesConsumed ? file.size : undefined,
+    };
+
+    logger?.log('local.fit.start', {
+        fileName: file.name,
+        fitFileBytes: bytesConsumed,
+        logicalSizeBytes: file.size,
+    });
+
+    return client.predictMountedFit(fitFile, fitInput, { onProgress });
 }
 
 /**
