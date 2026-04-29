@@ -49,4 +49,4 @@ jobs:
           git add vendor/llama-cpp README.md
           new_sha="$(git -C vendor/llama-cpp rev-parse --short HEAD)"
           git commit -m "chore: sync llama.cpp submodule (${new_sha})"
-          git push origin HEAD:main
+          git push origin HEAD:master
